@@ -163,6 +163,7 @@ table.tt td.brk{width:10px;background:transparent}
    off    = { "d-p": true }  (teacher / class / subject)
    ========================================================= */
 const KEY = 'digital-timetable-data-v2';
+const DEFAULT_API = 'https://script.google.com/macros/s/AKfycbxWhIjPBl2Tj2BhXzq3sFI4yGMgyn-pkfrF5spDJL4fr6wQtd-3PCX2JDZ2Ih1caUE_/exec';
 const PALETTE = ['#f59e0b','#22d3ee','#34d399','#f472b6','#a3e635','#fb923c','#60a5fa','#facc15','#f87171','#2dd4bf','#c084fc','#fda4af','#93c5fd','#86efac','#fcd34d','#67e8f9','#fdba74','#bef264','#a5b4fc','#f9a8d4'];
 const ALL_DAYS = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -177,7 +178,7 @@ function defaultTimes(n, start = '07:30', dur = 30) {
 }
 function blank() {
   return {
-    settings: { school: '', year: String(new Date().getFullYear()), days: ['Isnin','Selasa','Rabu','Khamis','Jumaat'], periods: 10, times: defaultTimes(10), breaks: [], sheetUrl: 'https://docs.google.com/spreadsheets/d/12JX7U3KjfqRIr3HryEejK6xWqg2k8_ZH6YNTjDFQ45s/edit', autoSync: true, extraTabs: '' },
+    settings: { school: '', year: String(new Date().getFullYear()), days: ['Isnin','Selasa','Rabu','Khamis','Jumaat'], periods: 10, times: defaultTimes(10), breaks: [], sheetUrl: DEFAULT_API, autoSync: true, extraTabs: '' },
     subjects: [], classes: [], rooms: [], teachers: [], lessons: [], cards: []
   };
 }
@@ -1164,6 +1165,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   if (qp && sheetId(qp)) {
     if (sheetId(DB.settings.sheetUrl) !== qp) { DB.settings.sheetUrl = 'https://docs.google.com/spreadsheets/d/' + qp + '/edit'; DB.settings.autoSync = true; save(); }
   }
+  if (!DB.settings.sheetUrl || /docs\.google\.com\/spreadsheets\/d\/12JX7U3K/.test(DB.settings.sheetUrl)) { DB.settings.sheetUrl = DEFAULT_API; DB.settings.autoSync = true; save(); }
   const api = new URLSearchParams(location.search).get('api');
   if (api && /^https:\/\/script\.google\.com\/macros\//.test(api) && DB.settings.sheetUrl !== api) { DB.settings.sheetUrl = api; DB.settings.autoSync = true; save(); }
   go(DB.cards.length ? 'view' : 'home');
