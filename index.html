@@ -177,7 +177,7 @@ function defaultTimes(n, start = '07:30', dur = 30) {
 }
 function blank() {
   return {
-    settings: { school: '', year: String(new Date().getFullYear()), days: ['Isnin','Selasa','Rabu','Khamis','Jumaat'], periods: 10, times: defaultTimes(10), breaks: [], sheetUrl: '', autoSync: true, extraTabs: '' },
+    settings: { school: '', year: String(new Date().getFullYear()), days: ['Isnin','Selasa','Rabu','Khamis','Jumaat'], periods: 10, times: defaultTimes(10), breaks: [], sheetUrl: 'https://docs.google.com/spreadsheets/d/12JX7U3KjfqRIr3HryEejK6xWqg2k8_ZH6YNTjDFQ45s/edit', autoSync: true, extraTabs: '' },
     subjects: [], classes: [], rooms: [], teachers: [], lessons: [], cards: []
   };
 }
@@ -301,7 +301,7 @@ const VIEWS = {
     return head('Google Sheet / Excel aSc', 'Masukkan data hasil eksport aSc TimeTables. Jadual lengkap sekolah akan terbina secara automatik.') +
     `<div class="card hero"><h3>🔗 Pautan Google Sheet</h3>
       <p class="muted">1) Muat naik fail Excel aSc ke Google Drive dan buka dengan Google Sheets.<br>2) Klik <b>Kongsi → Sesiapa yang mempunyai pautan → Pelihat</b>.<br>3) Salin pautan dan tampal di bawah.</p>
-      <label>Pautan Google Sheet</label><input id="g_url" placeholder="https://docs.google.com/spreadsheets/d/..." value="${esc(S.sheetUrl)}">
+      <label>Pautan Google Sheet ATAU URL Apps Script (/exec)</label><input id="g_url" placeholder="https://script.google.com/macros/s/.../exec atau https://docs.google.com/spreadsheets/d/..." value="${esc(S.sheetUrl)}">
       <div style="margin-top:10px"><label style="text-transform:none;font-size:14px;color:var(--text);display:flex;gap:8px;align-items:center"><input type="checkbox" id="g_auto" ${S.autoSync ? 'checked' : ''}> Segerak automatik setiap kali aplikasi dibuka (jika ada internet)</label></div>
       <details style="margin-top:10px"><summary class="muted" style="cursor:pointer">Tetapan lanjut</summary>
         <label style="margin-top:10px">Nama tab subjek tambahan (satu setiap baris)</label>
@@ -1042,12 +1042,27 @@ async function syncSheet(manual) {
   if (manual) {
     S.sheetUrl = $('#g_url').value.trim(); S.autoSync = $('#g_auto').checked; S.extraTabs = $('#g_extra').value; save();
   }
-  const id = sheetId(S.sheetUrl);
+  const isScript = /script\.google(usercontent)?\.com\/macros\//.test(S.sheetUrl);
+  const id = isScript ? 'script' : sheetId(S.sheetUrl);
   const logEl = manual ? $('#g_log') : null, bar = manual ? $('#g_bar') : null;
   const lines = []; const log = m => { lines.push(m); if (logEl) logEl.innerHTML = lines.map(esc).join('<br>'); };
   if (!id) { if (manual) toast('Pautan Google Sheet tidak sah.'); return; }
   syncing = true; const btn = manual ? $('#g_btn') : null; if (btn) { btn.disabled = true; btn.textContent = '⏳ Memuatkan...'; }
   try {
+    if (isScript) {
+      log('⏳ Menghubungi Apps Script ...'); if (bar) bar.style.width = '30%';
+      const r = await fetch(S.sheetUrl.trim() + (S.sheetUrl.includes('?') ? '&' : '?') + '_=' + Date.now(), { cache: 'no-store', redirect: 'follow' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || 'Apps Script ralat');
+      log('• ' + Object.keys(j.tabs).length + ' tab diterima' + (j.name ? ' dari "' + j.name + '"' : ''));
+      if (bar) bar.style.width = '80%';
+      const res = buildFromTabs(j.tabs, log);
+      res.d.settings.sheetUrl = S.sheetUrl; res.d.settings.autoSync = S.autoSync; res.d.settings.extraTabs = S.extraTabs;
+      applyImport(res, log); if (bar) bar.style.width = '100%';
+      if (manual) setTimeout(() => go('view'), 900); else go(current === 'home' ? 'view' : current);
+      return;
+    }
     const tabs = {};
     const base = ['Subjects', 'Classes', 'Classrooms', 'Teachers', 'Lessons'];
     let done = 0;
@@ -1109,7 +1124,7 @@ async function importXlsxFile(file) {
     setTimeout(() => go('view'), 900);
   } catch (e) { log('✖ ' + e.message); }
 }
-function appLink() { const id = sheetId(DB.settings.sheetUrl); return location.origin + location.pathname + (id ? '?sheet=' + id : ''); }
+function appLink() { if (/script\.google/.test(DB.settings.sheetUrl)) return location.origin + location.pathname + '?api=' + encodeURIComponent(DB.settings.sheetUrl); const id = sheetId(DB.settings.sheetUrl); return location.origin + location.pathname + (id ? '?sheet=' + id : ''); }
 function shareLink() { const l = appLink(); (navigator.clipboard ? navigator.clipboard.writeText(l) : Promise.reject()).then(() => toast('Pautan disalin: guru boleh buka terus jadual.'), () => prompt('Salin pautan ini:', l)); }
 
 /* =========================================================
@@ -1149,6 +1164,8 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   if (qp && sheetId(qp)) {
     if (sheetId(DB.settings.sheetUrl) !== qp) { DB.settings.sheetUrl = 'https://docs.google.com/spreadsheets/d/' + qp + '/edit'; DB.settings.autoSync = true; save(); }
   }
+  const api = new URLSearchParams(location.search).get('api');
+  if (api && /^https:\/\/script\.google\.com\/macros\//.test(api) && DB.settings.sheetUrl !== api) { DB.settings.sheetUrl = api; DB.settings.autoSync = true; save(); }
   go(DB.cards.length ? 'view' : 'home');
   if (DB.settings.sheetUrl && DB.settings.autoSync && navigator.onLine) syncSheet(false);
 })();
