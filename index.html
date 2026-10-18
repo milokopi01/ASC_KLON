@@ -133,6 +133,7 @@ table.tt td.brk{width:10px;background:transparent}
   <aside id="side">
     <div class="brand"><div class="logo"><i></i><i></i><i></i><i></i></div><div><b>Digital Timetable</b><small>Penjana Jadual Waktu</small></div></div>
     <button class="nav" data-v="home"><span class="n">⌂</span>Utama</button>
+    <button class="nav" data-v="sheet"><span class="n">⇪</span>Google Sheet</button>
     <button class="nav" data-v="settings"><span class="n">1</span>Maklumat Asas</button>
     <button class="nav" data-v="subjects"><span class="n">2</span>Subjek</button>
     <button class="nav" data-v="classes"><span class="n">3</span>Kelas</button>
@@ -156,84 +157,102 @@ table.tt td.brk{width:10px;background:transparent}
 <script>
 'use strict';
 /* =========================================================
-   DATA
+   DATA MODEL
+   lesson = { id, classIds:[], subjectId, teacherIds:[], roomId, perWeek (jumlah waktu), len }
+   card   = { lessonId, day, period, len, locked }
+   off    = { "d-p": true }  (teacher / class / subject)
    ========================================================= */
-const KEY = 'digital-timetable-data-v1';
-const PALETTE = ['#f59e0b','#22d3ee','#34d399','#f472b6','#a3e635','#fb923c','#60a5fa','#facc15','#f87171','#2dd4bf','#c084fc','#fda4af','#93c5fd','#86efac','#fcd34d','#67e8f9'];
+const KEY = 'digital-timetable-data-v2';
+const PALETTE = ['#f59e0b','#22d3ee','#34d399','#f472b6','#a3e635','#fb923c','#60a5fa','#facc15','#f87171','#2dd4bf','#c084fc','#fda4af','#93c5fd','#86efac','#fcd34d','#67e8f9','#fdba74','#bef264','#a5b4fc','#f9a8d4'];
+const ALL_DAYS = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
 const uid = () => Math.random().toString(36).slice(2, 10);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const $ = s => document.querySelector(s);
 
 function defaultTimes(n, start = '07:30', dur = 30) {
-  const out = []; let [h, m] = start.split(':').map(Number); let t = h * 60 + m;
-  const f = x => String(Math.floor(x / 60)).padStart(2, '0') + ':' + String(x % 60).padStart(2, '0');
+  const out = []; const [h, m] = start.split(':').map(Number); let t = h * 60 + m;
+  const f = x => String(Math.floor(x / 60) % 24).padStart(2, '0') + ':' + String(x % 60).padStart(2, '0');
   for (let i = 0; i < n; i++) { out.push({ s: f(t), e: f(t + dur) }); t += dur; }
   return out;
 }
 function blank() {
   return {
-    settings: { school: '', year: String(new Date().getFullYear()), days: ['Isnin','Selasa','Rabu','Khamis','Jumaat'], periods: 10, times: defaultTimes(10), breaks: [] },
+    settings: { school: '', year: String(new Date().getFullYear()), days: ['Isnin','Selasa','Rabu','Khamis','Jumaat'], periods: 10, times: defaultTimes(10), breaks: [], sheetUrl: '', autoSync: true, extraTabs: '' },
     subjects: [], classes: [], rooms: [], teachers: [], lessons: [], cards: []
   };
 }
 function demo() {
   const d = blank();
   d.settings.school = 'SMK Contoh Digital'; d.settings.breaks = [4];
-  const subj = [['Bahasa Melayu','BM'],['Bahasa Inggeris','BI'],['Matematik','MT'],['Sains','SN'],['Sejarah','SJ'],['Pendidikan Islam','PI'],['Geografi','GE'],['Pendidikan Jasmani','PJ'],['Reka Bentuk & Teknologi','RBT'],['Pendidikan Seni','PSV']];
-  subj.forEach((s, i) => d.subjects.push({ id: uid(), name: s[0], short: s[1], color: PALETTE[i % PALETTE.length] }));
-  ['1 Amanah','1 Bestari','2 Amanah','2 Bestari'].forEach(n => d.classes.push({ id: uid(), name: n }));
-  [['Makmal Sains'],['Gelanggang'],['Bengkel RBT']].forEach(r => d.rooms.push({ id: uid(), name: r[0] }));
-  const tn = [['Pn. Aisyah','AIS'],['En. Badrul','BAD'],['Cik Chong','CHG'],['Pn. Devi','DEV'],['En. Faizal','FAI'],['Ust. Hakim','HAK'],['Pn. Intan','INT'],['En. Jamal','JAM']];
-  tn.forEach((t, i) => d.teachers.push({ id: uid(), name: t[0], short: t[1], color: PALETTE[(i + 5) % PALETTE.length], off: {}, maxDay: 0 }));
+  [['Bahasa Melayu','BM'],['Bahasa Inggeris','BI'],['Matematik','MT'],['Sains','SN'],['Sejarah','SJ'],['Pendidikan Islam','PI'],['Geografi','GE'],['Pendidikan Jasmani','PJ'],['Reka Bentuk & Teknologi','RBT'],['Pendidikan Seni','PSV']]
+    .forEach((s, i) => d.subjects.push({ id: uid(), name: s[0], short: s[1], color: PALETTE[i % PALETTE.length], off: {} }));
+  ['1 Amanah','1 Bestari','2 Amanah','2 Bestari'].forEach(n => d.classes.push({ id: uid(), name: n, short: n, off: {} }));
+  ['Makmal Sains','Gelanggang','Bengkel RBT'].forEach(r => d.rooms.push({ id: uid(), name: r, short: r }));
+  [['Pn. Aisyah','AIS'],['En. Badrul','BAD'],['Cik Chong','CHG'],['Pn. Devi','DEV'],['En. Faizal','FAI'],['Ust. Hakim','HAK'],['Pn. Intan','INT'],['En. Jamal','JAM']]
+    .forEach((t, i) => d.teachers.push({ id: uid(), name: t[0], short: t[1], color: PALETTE[(i + 5) % PALETTE.length], off: {}, maxDay: 0 }));
   const S = k => d.subjects.find(s => s.short === k).id, T = k => d.teachers.find(t => t.short === k).id, R = k => d.rooms.find(r => r.name === k).id;
   const plan = [['BM','AIS',6,1,''],['BI','CHG',5,1,''],['MT','BAD',5,1,''],['SN','DEV',4,2,'Makmal Sains'],['SJ','INT',3,1,''],['PI','HAK',4,1,''],['GE','INT',2,1,''],['PJ','FAI',2,2,'Gelanggang'],['RBT','JAM',2,2,'Bengkel RBT'],['PSV','JAM',2,1,'']];
-  d.classes.forEach((c, ci) => plan.forEach(p => {
-    let t = T(p[1]);
-    if (ci >= 2 && p[0] === 'BM') t = T('CHG') === t ? t : T('AIS');
-    d.lessons.push({ id: uid(), classId: c.id, subjectId: S(p[0]), teacherId: t, roomId: p[4] ? R(p[4]) : '', perWeek: p[2], len: p[3] });
-  }));
+  d.classes.forEach(c => plan.forEach(p => d.lessons.push({ id: uid(), classIds: [c.id], subjectId: S(p[0]), teacherIds: [T(p[1])], roomId: p[4] ? R(p[4]) : '', perWeek: p[2], len: p[3] })));
   d.teachers.find(t => t.short === 'FAI').off = { '4-7': true, '4-8': true, '4-9': true };
   return d;
 }
 let DB;
-try { DB = JSON.parse(localStorage.getItem(KEY)) || null; } catch (e) { DB = null; }
+try { DB = JSON.parse(localStorage.getItem(KEY)) || JSON.parse(localStorage.getItem('digital-timetable-data-v1')) || null; } catch (e) { DB = null; }
 if (!DB) DB = blank();
 function normalize() {
   const b = blank();
   for (const k of Object.keys(b)) if (DB[k] === undefined) DB[k] = b[k];
   for (const k of Object.keys(b.settings)) if (DB.settings[k] === undefined) DB.settings[k] = b.settings[k];
-  const P = DB.settings.periods;
-  while (DB.settings.times.length < P) { const l = DB.settings.times[DB.settings.times.length - 1]; DB.settings.times.push(defaultTimes(1, l ? l.e : '07:30')[0]); }
-  DB.settings.times.length = P;
-  DB.teachers.forEach(t => { t.off = t.off || {}; t.maxDay = +t.maxDay || 0; });
-  DB.lessons.forEach(l => { l.perWeek = Math.max(1, +l.perWeek || 1); l.len = Math.max(1, +l.len || 1); });
-  // remove cards referring to missing lessons or invalid positions
+  const S = DB.settings;
+  S.periods = Math.max(1, Math.min(20, +S.periods || 1));
+  if (!Array.isArray(S.times)) S.times = [];
+  while (S.times.length < S.periods) { const l = S.times[S.times.length - 1]; S.times.push(defaultTimes(2, l ? l.e : '07:30')[0]); }
+  S.times.length = S.periods;
+  S.breaks = (S.breaks || []).filter(x => x < S.periods - 1);
+  DB.teachers.forEach(t => { t.off = t.off || {}; t.maxDay = +t.maxDay || 0; t.short = t.short || t.name; t.color = t.color || PALETTE[0]; });
+  DB.classes.forEach(c => { c.off = c.off || {}; c.short = c.short || c.name; });
+  DB.subjects.forEach(s => { s.off = s.off || {}; s.color = s.color || PALETTE[0]; });
+  DB.rooms.forEach(r => { r.short = r.short || r.name; });
+  DB.lessons.forEach(l => {
+    if (!Array.isArray(l.classIds)) l.classIds = l.classId ? [l.classId] : [];
+    if (!Array.isArray(l.teacherIds)) l.teacherIds = l.teacherId ? [l.teacherId] : [];
+    delete l.classId; delete l.teacherId;
+    l.perWeek = Math.max(1, +l.perWeek || 1); l.len = Math.max(1, +l.len || 1); l.roomId = l.roomId || '';
+  });
   const ids = new Set(DB.lessons.map(l => l.id));
-  DB.cards = (DB.cards || []).filter(c => ids.has(c.lessonId) && c.day < DB.settings.days.length && c.period + c.len <= P);
+  DB.cards = (DB.cards || []).filter(c => ids.has(c.lessonId) && c.day >= 0 && c.day < S.days.length && c.period >= 0 && c.period + c.len <= S.periods);
 }
 normalize();
-function save() { localStorage.setItem(KEY, JSON.stringify(DB)); }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) { toast('Storan peranti penuh — eksport data anda.'); } }
 
 const byId = (arr, id) => arr.find(x => x.id === id);
-const subj = id => byId(DB.subjects, id) || { name: '?', short: '?', color: '#888' };
+const subj = id => byId(DB.subjects, id) || { name: '?', short: '?', color: '#888', off: {} };
 const teach = id => byId(DB.teachers, id) || { name: '?', short: '?', color: '#888', off: {} };
-const klass = id => byId(DB.classes, id) || { name: '?' };
+const klass = id => byId(DB.classes, id) || { name: '?', short: '?', off: {} };
 const room = id => byId(DB.rooms, id);
+const lessonOf = id => byId(DB.lessons, id);
+const lClasses = l => l.classIds.map(id => klass(id).name).join(', ') || '—';
+const lClassesShort = l => l.classIds.map(id => klass(id).short).join(', ') || '—';
+const lTeachers = l => l.teacherIds.map(id => teach(id).name).join(', ') || 'Tanpa guru';
+const lTeachersShort = l => l.teacherIds.map(id => teach(id).short).join(', ') || '—';
+const sumPeriods = arr => arr.reduce((a, l) => a + l.perWeek, 0);
 
 /* =========================================================
    UI HELPERS
    ========================================================= */
-function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2600); }
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 3000); }
 function openModal(html) { $('#mbox').innerHTML = html; $('#modal').classList.add('show'); const f = $('#mbox input,#mbox select'); if (f) f.focus(); }
 function closeModal() { $('#modal').classList.remove('show'); }
 $('#modal').addEventListener('mousedown', e => { if (e.target.id === 'modal') closeModal(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
-const opts = (arr, sel, label = x => x.name, empty) => (empty !== undefined ? `<option value="">${esc(empty)}</option>` : '') + arr.map(x => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>${esc(label(x))}</option>`).join('');
-function lessonUnits(l) { return l.perWeek; }
-function contrast(hex) { const h = hex.replace('#', ''); const r = parseInt(h.substr(0, 2), 16), g = parseInt(h.substr(2, 2), 16), b = parseInt(h.substr(4, 2), 16); return (r * 299 + g * 587 + b * 114) / 1000 > 140 ? '#0b1220' : '#ffffff'; }
+const opts = (arr, sel, label = x => x.name, empty) => {
+  const selected = Array.isArray(sel) ? sel : [sel];
+  return (empty !== undefined ? `<option value="">${esc(empty)}</option>` : '') + arr.map(x => `<option value="${x.id}" ${selected.includes(x.id) ? 'selected' : ''}>${esc(label(x))}</option>`).join('');
+};
+function contrast(hex) { const h = String(hex).replace('#', ''); if (h.length < 6) return '#0b1220'; const r = parseInt(h.substr(0, 2), 16), g = parseInt(h.substr(2, 2), 16), b = parseInt(h.substr(4, 2), 16); return (r * 299 + g * 587 + b * 114) / 1000 > 140 ? '#0b1220' : '#ffffff'; }
 
 let current = 'home';
-const viewState = { type: 'class', id: '' };
+const viewState = { type: 'class', id: '', lf: '' };
 function go(v) {
   current = v;
   document.querySelectorAll('.nav').forEach(b => b.classList.toggle('on', b.dataset.v === v));
@@ -251,11 +270,12 @@ const nextBtn = (v, txt) => `<div class="row no-print" style="justify-content:fl
 const AFTER = {};
 const VIEWS = {
   home() {
-    const totalUnits = DB.lessons.reduce((a, l) => a + l.perWeek, 0);
+    const totalUnits = sumPeriods(DB.lessons);
     const placed = DB.cards.reduce((a, c) => a + c.len, 0);
     return head('Selamat datang 👋', esc(DB.settings.school || 'Bina jadual waktu sekolah anda dalam beberapa langkah.')) +
-    `<div class="card hero"><h3 style="font-size:22px">Jadual waktu guru — dijana automatik.</h3>
-      <p class="muted">Ikut langkah seperti aSc TimeTables: isi maklumat asas, subjek, kelas, bilik, guru dan pelajaran, kemudian tekan <b>Jana</b>.</p>
+    `<div class="card hero"><h3 style="font-size:22px">Jadual waktu guru — siap dari Google Sheet atau dijana automatik.</h3>
+      <p class="muted">Sambung Google Sheet hasil eksport aSc TimeTables dan jadual lengkap sekolah terus terpapar. Atau bina sendiri langkah demi langkah dan tekan <b>Jana</b>.</p>
+      <div class="row" style="margin-top:10px"><button class="btn pri big" onclick="go('sheet')">🔗 Sambung Google Sheet</button>${placed ? `<button class="btn big" onclick="go('view')">▦ Lihat jadual</button>` : ''}</div>
       <div class="steps">
         ${[['settings','1. Maklumat Asas','Nama sekolah, hari, waktu'],['subjects','2. Subjek','Senarai mata pelajaran'],['classes','3. Kelas','Senarai kelas'],['rooms','4. Bilik','Makmal, gelanggang (pilihan)'],['teachers','5. Guru','Warna, masa tidak hadir'],['lessons','6. Pelajaran','Siapa ajar apa, berapa waktu'],['generate','7. Semak & Jana','Jana jadual automatik'],['view','Jadual Waktu','Lihat, ubah & cetak']].map(s => `<div class="step" onclick="go('${s[0]}')"><b>${s[1]}</b><p>${s[2]}</p></div>`).join('')}
       </div></div>
@@ -268,7 +288,7 @@ const VIEWS = {
     </div>
     <div class="card"><h3>Fail</h3><p class="muted">Simpan salinan data atau mulakan dengan contoh.</p>
       <div class="row">
-        <button class="btn pri" onclick="loadDemo()">Muat data contoh</button>
+        <button class="btn" onclick="loadDemo()">Muat data contoh</button>
         <button class="btn" onclick="exportJSON()">Eksport (.json)</button>
         <button class="btn" onclick="$('#fileIn').click()">Import (.json)</button>
         <button class="btn danger" onclick="newFile()">Fail baharu (kosong)</button>
@@ -276,46 +296,67 @@ const VIEWS = {
       </div></div>`;
   },
 
+  sheet() {
+    const S = DB.settings;
+    return head('Google Sheet / Excel aSc', 'Masukkan data hasil eksport aSc TimeTables. Jadual lengkap sekolah akan terbina secara automatik.') +
+    `<div class="card hero"><h3>🔗 Pautan Google Sheet</h3>
+      <p class="muted">1) Muat naik fail Excel aSc ke Google Drive dan buka dengan Google Sheets.<br>2) Klik <b>Kongsi → Sesiapa yang mempunyai pautan → Pelihat</b>.<br>3) Salin pautan dan tampal di bawah.</p>
+      <label>Pautan Google Sheet</label><input id="g_url" placeholder="https://docs.google.com/spreadsheets/d/..." value="${esc(S.sheetUrl)}">
+      <div style="margin-top:10px"><label style="text-transform:none;font-size:14px;color:var(--text);display:flex;gap:8px;align-items:center"><input type="checkbox" id="g_auto" ${S.autoSync ? 'checked' : ''}> Segerak automatik setiap kali aplikasi dibuka (jika ada internet)</label></div>
+      <details style="margin-top:10px"><summary class="muted" style="cursor:pointer">Tetapan lanjut</summary>
+        <label style="margin-top:10px">Nama tab subjek tambahan (satu setiap baris)</label>
+        <textarea id="g_extra" rows="3" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px;color:var(--text)" placeholder="cth: PENDIDIKAN JASMANI DAN K2942">${esc(S.extraTabs)}</textarea>
+        <p class="muted" style="font-size:12px">Biasanya tidak perlu. Gunakan jika nama tab subjek dipendekkan oleh aSc dan jadual subjek itu tidak dimuatkan.</p>
+      </details>
+      <div class="row" style="margin-top:14px"><button class="btn pri big" id="g_btn" onclick="syncSheet(true)">⚡ Muat & bina jadual</button>
+      ${S.sheetUrl ? `<button class="btn" onclick="shareLink()">📋 Salin pautan app untuk guru</button>` : ''}</div>
+      <div class="progress"><i id="g_bar"></i></div><div id="g_log" class="muted" style="margin-top:10px;font-size:13px"></div>
+    </div>
+    <div class="card"><h3>📄 Atau muat naik fail Excel (.xlsx)</h3><p class="muted">Fail Excel yang sama dari aSc juga boleh dibuka terus tanpa Google Sheet.</p>
+      <input type="file" id="xlsxIn" accept=".xlsx,.xls"><div id="x_log" class="muted" style="margin-top:10px;font-size:13px"></div></div>
+    <div class="card"><h3>Tab yang dibaca</h3><p class="muted" style="font-size:13px"><b>Subjects</b>, <b>Classes</b>, <b>Classrooms</b>, <b>Teachers</b>, <b>Lessons</b> dan tab jadual setiap subjek (cth: <b>MATEMATIK.</b>, <b>BAHASA MELAYU.</b>) yang mengandungi Day / Lesson / kelas. Masa tidak hadir guru, kelas dan subjek turut diimport. Waktu yang tiada dalam tab subjek boleh dilengkapkan dengan butang <b>Jana</b>.</p></div>`;
+  },
+
   settings() {
     const s = DB.settings;
-    const allDays = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
     return head('Maklumat Asas', 'Nama sekolah, hari persekolahan, bilangan waktu sehari dan masa setiap waktu.') +
     `<div class="card"><div class="grid2">
-      <div><label>Nama sekolah</label><input id="s_school" value="${esc(s.school)}" placeholder="cth: SMK Taman Ilmu"></div>
+      <div><label>Nama sekolah</label><input id="s_school" value="${esc(s.school)}" placeholder="cth: SK Taman Ilmu"></div>
       <div><label>Tahun / sesi</label><input id="s_year" value="${esc(s.year)}"></div>
-      <div><label>Bilangan waktu sehari</label><input id="s_periods" type="number" min="1" max="16" value="${s.periods}"></div>
+      <div><label>Bilangan waktu sehari</label><input id="s_periods" type="number" min="1" max="20" value="${s.periods}"></div>
       <div><label>Mula waktu pertama</label><input id="s_start" type="time" value="${esc(s.times[0] ? s.times[0].s : '07:30')}"></div>
       <div><label>Tempoh satu waktu (minit)</label><input id="s_dur" type="number" min="5" max="120" value="30"></div>
     </div>
     <div style="margin-top:14px"><label>Hari persekolahan</label><div class="row">
-      ${allDays.map(d => `<label style="text-transform:none;font-size:14px;color:var(--text);display:flex;gap:6px;align-items:center;margin:0 10px 0 0"><input type="checkbox" class="s_day" value="${d}" ${s.days.includes(d) ? 'checked' : ''}>${d}</label>`).join('')}
+      ${ALL_DAYS.map(d => `<label style="text-transform:none;font-size:14px;color:var(--text);display:flex;gap:6px;align-items:center;margin:0 10px 0 0"><input type="checkbox" class="s_day" value="${d}" ${s.days.includes(d) ? 'checked' : ''}>${d}</label>`).join('')}
     </div></div>
     <div class="row" style="margin-top:14px"><button class="btn" onclick="autoTimes()">Kira semula masa automatik</button><button class="btn pri" onclick="saveSettings()">Simpan</button></div></div>
-    <div class="card"><h3>Loceng & rehat</h3><p class="muted">Ubah masa setiap waktu. Tandakan "Rehat selepas" untuk menunjukkan rehat dalam jadual.</p>
+    <div class="card"><h3>Loceng & rehat</h3><p class="muted">Ubah masa setiap waktu. Tandakan "Rehat selepas" untuk menunjukkan garis rehat dalam jadual.</p>
       <table class="list"><tr><th>Waktu</th><th>Mula</th><th>Tamat</th><th>Rehat selepas</th></tr>
-      ${s.times.map((t, i) => `<tr><td><b>${i + 1}</b></td><td><input type="time" class="t_s" data-i="${i}" value="${t.s}"></td><td><input type="time" class="t_e" data-i="${i}" value="${t.e}"></td><td><input type="checkbox" class="t_b" data-i="${i}" ${s.breaks.includes(i) ? 'checked' : ''}></td></tr>`).join('')}
+      ${s.times.map((t, i) => `<tr><td><b>${i + 1}</b></td><td><input type="time" class="t_s" data-i="${i}" value="${t.s}"></td><td><input type="time" class="t_e" data-i="${i}" value="${t.e}"></td><td>${i < s.periods - 1 ? `<input type="checkbox" class="t_b" data-i="${i}" ${s.breaks.includes(i) ? 'checked' : ''}>` : ''}</td></tr>`).join('')}
       </table><div class="row" style="margin-top:12px;justify-content:flex-end"><button class="btn pri" onclick="saveSettings()">Simpan</button></div></div>` + nextBtn('subjects', 'Seterusnya: Subjek');
   },
 
   subjects() {
     return head('Subjek', 'Mata pelajaran yang diajar pada sesi ini.', `<button class="btn pri" onclick="editSubject()">+ Subjek baharu</button>`) +
-    `<div class="card">${DB.subjects.length ? `<table class="list"><tr><th>Nama</th><th>Singkatan</th><th>Waktu/minggu</th><th></th></tr>
-      ${DB.subjects.map(s => `<tr><td><span class="dot" style="background:${s.color}"></span>${esc(s.name)}</td><td>${esc(s.short)}</td><td>${DB.lessons.filter(l => l.subjectId === s.id).reduce((a, l) => a + l.perWeek, 0)}</td>
-      <td style="text-align:right"><button class="btn sm" onclick="editSubject('${s.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('subjects','${s.id}')">Padam</button></td></tr>`).join('')}</table>` : '<div class="empty">Belum ada subjek.</div>'}</div>` + nextBtn('classes', 'Seterusnya: Kelas');
+    `<div class="card">${DB.subjects.length ? `<table class="list"><tr><th>Nama</th><th>Singkatan</th><th>Waktu/minggu</th><th>Tidak boleh</th><th></th></tr>
+      ${DB.subjects.map(s => `<tr><td><span class="dot" style="background:${s.color}"></span>${esc(s.name)}</td><td>${esc(s.short)}</td><td>${sumPeriods(DB.lessons.filter(l => l.subjectId === s.id))}</td><td>${Object.keys(s.off).length} slot</td>
+      <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="editOff('subjects','${s.id}')">Masa</button> <button class="btn sm" onclick="editSubject('${s.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('subjects','${s.id}')">Padam</button></td></tr>`).join('')}</table>` : '<div class="empty">Belum ada subjek.</div>'}</div>` + nextBtn('classes', 'Seterusnya: Kelas');
   },
 
   classes() {
+    const cap = DB.settings.days.length * DB.settings.periods;
     return head('Kelas', 'Senarai kelas di sekolah anda.', `<button class="btn pri" onclick="editClass()">+ Kelas baharu</button>`) +
-    `<div class="card">${DB.classes.length ? `<table class="list"><tr><th>Nama kelas</th><th>Waktu/minggu</th><th>Kapasiti</th><th></th></tr>
-      ${DB.classes.map(c => { const u = DB.lessons.filter(l => l.classId === c.id).reduce((a, l) => a + l.perWeek, 0); const cap = DB.settings.days.length * DB.settings.periods;
-        return `<tr><td><b>${esc(c.name)}</b></td><td>${u}</td><td><span class="pill ${u <= cap ? 'ok' : 'bad'}">${u}/${cap}</span></td>
-      <td style="text-align:right"><button class="btn sm" onclick="editClass('${c.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('classes','${c.id}')">Padam</button></td></tr>`; }).join('')}</table>` : '<div class="empty">Belum ada kelas.</div>'}</div>` + nextBtn('rooms', 'Seterusnya: Bilik');
+    `<div class="card">${DB.classes.length ? `<table class="list"><tr><th>Nama kelas</th><th>Singkatan</th><th>Waktu/minggu</th><th>Tidak boleh</th><th></th></tr>
+      ${DB.classes.map(c => { const u = sumPeriods(DB.lessons.filter(l => l.classIds.includes(c.id))); const avail = cap - Object.keys(c.off).length;
+        return `<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.short)}</td><td><span class="pill ${u <= avail ? 'ok' : 'bad'}">${u}/${avail}</span></td><td>${Object.keys(c.off).length} slot</td>
+      <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="editOff('classes','${c.id}')">Masa</button> <button class="btn sm" onclick="editClass('${c.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('classes','${c.id}')">Padam</button></td></tr>`; }).join('')}</table>` : '<div class="empty">Belum ada kelas.</div>'}</div>` + nextBtn('rooms', 'Seterusnya: Bilik');
   },
 
   rooms() {
     return head('Bilik', 'Bilik khas seperti makmal atau gelanggang. Penjana memastikan satu bilik hanya digunakan oleh satu kelas pada satu masa. (Pilihan)', `<button class="btn pri" onclick="editRoom()">+ Bilik baharu</button>`) +
-    `<div class="card">${DB.rooms.length ? `<table class="list"><tr><th>Nama bilik</th><th>Digunakan</th><th></th></tr>
-      ${DB.rooms.map(r => `<tr><td><b>${esc(r.name)}</b></td><td>${DB.lessons.filter(l => l.roomId === r.id).reduce((a, l) => a + l.perWeek, 0)} waktu/minggu</td>
+    `<div class="card">${DB.rooms.length ? `<table class="list"><tr><th>Nama bilik</th><th>Singkatan</th><th>Digunakan</th><th></th></tr>
+      ${DB.rooms.map(r => `<tr><td><b>${esc(r.name)}</b></td><td>${esc(r.short)}</td><td>${sumPeriods(DB.lessons.filter(l => l.roomId === r.id))} waktu/minggu</td>
       <td style="text-align:right"><button class="btn sm" onclick="editRoom('${r.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('rooms','${r.id}')">Padam</button></td></tr>`).join('')}</table>` : '<div class="empty">Tiada bilik khas. Kelas akan menggunakan bilik darjah sendiri.</div>'}</div>` + nextBtn('teachers', 'Seterusnya: Guru');
   },
 
@@ -323,21 +364,21 @@ const VIEWS = {
     return head('Guru', 'Tambah guru, pilih warna dan tetapkan masa guru tidak boleh mengajar.', `<button class="btn" onclick="colorAll()">Warnakan semua</button><button class="btn pri" onclick="editTeacher()">+ Guru baharu</button>`) +
     `<div class="card">${DB.teachers.length ? `<table class="list"><tr><th>Nama</th><th>Singkatan</th><th>Beban</th><th>Maks/hari</th><th>Tidak hadir</th><th></th></tr>
       ${DB.teachers.map(t => `<tr><td><span class="dot" style="background:${t.color}"></span>${esc(t.name)}</td><td>${esc(t.short)}</td>
-      <td>${DB.lessons.filter(l => l.teacherId === t.id).reduce((a, l) => a + l.perWeek, 0)} waktu</td><td>${t.maxDay || '—'}</td><td>${Object.keys(t.off).length} slot</td>
-      <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="editOff('${t.id}')">Masa tidak hadir</button> <button class="btn sm" onclick="editTeacher('${t.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('teachers','${t.id}')">Padam</button></td></tr>`).join('')}</table>` : '<div class="empty">Belum ada guru.</div>'}</div>` + nextBtn('lessons', 'Seterusnya: Pelajaran');
+      <td>${sumPeriods(DB.lessons.filter(l => l.teacherIds.includes(t.id)))} waktu</td><td>${t.maxDay || '—'}</td><td>${Object.keys(t.off).length} slot</td>
+      <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="editOff('teachers','${t.id}')">Masa tidak hadir</button> <button class="btn sm" onclick="editTeacher('${t.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('teachers','${t.id}')">Padam</button></td></tr>`).join('')}</table>` : '<div class="empty">Belum ada guru.</div>'}</div>` + nextBtn('lessons', 'Seterusnya: Pelajaran');
   },
 
   lessons() {
     const fc = viewState.lf || '';
-    const list = DB.lessons.filter(l => !fc || l.classId === fc || l.teacherId === fc);
+    const list = DB.lessons.filter(l => !fc || l.classIds.includes(fc) || l.teacherIds.includes(fc));
     return head('Pelajaran', 'Tetapkan kelas, subjek, guru, bilangan waktu seminggu dan panjang sesi (1 = single, 2 = berkembar).', `<button class="btn" onclick="copyLessons()">Salin ke kelas lain</button><button class="btn pri" onclick="editLesson()">+ Pelajaran baharu</button>`) +
     `<div class="card"><div class="row" style="margin-bottom:10px"><div style="min-width:260px"><label>Tapis</label><select onchange="viewState.lf=this.value;render()">
       <option value="">Semua pelajaran</option><optgroup label="Kelas">${opts(DB.classes, fc)}</optgroup><optgroup label="Guru">${opts(DB.teachers, fc)}</optgroup></select></div></div>
-    ${list.length ? `<table class="list"><tr><th>Kelas</th><th>Subjek</th><th>Guru</th><th>Bilik</th><th>Waktu/minggu</th><th>Sesi</th><th>Disusun</th><th></th></tr>
+    ${list.length ? `<div class="tt-wrap"><table class="list"><tr><th>Kelas</th><th>Subjek</th><th>Guru</th><th>Bilik</th><th>Waktu/minggu</th><th>Sesi</th><th>Disusun</th><th></th></tr>
       ${list.map(l => { const s = subj(l.subjectId), p = DB.cards.filter(c => c.lessonId === l.id).reduce((a, c) => a + c.len, 0);
-        return `<tr><td><b>${esc(klass(l.classId).name)}</b></td><td><span class="dot" style="background:${s.color}"></span>${esc(s.name)}</td><td>${esc(teach(l.teacherId).name)}</td><td>${esc(room(l.roomId)?.name || '—')}</td>
+        return `<tr><td><b>${esc(lClasses(l))}</b></td><td><span class="dot" style="background:${s.color}"></span>${esc(s.name)}</td><td>${esc(lTeachers(l))}</td><td>${esc(room(l.roomId)?.name || '—')}</td>
         <td>${l.perWeek}</td><td>${l.len === 1 ? 'Single' : l.len === 2 ? 'Berkembar' : l.len + ' waktu'}</td><td><span class="pill ${p >= l.perWeek ? 'ok' : 'bad'}">${p}/${l.perWeek}</span></td>
-        <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="editLesson('${l.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('lessons','${l.id}')">Padam</button></td></tr>`; }).join('')}</table>` : '<div class="empty">Belum ada pelajaran.</div>'}</div>` + nextBtn('generate', 'Seterusnya: Semak & Jana');
+        <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="editLesson('${l.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('lessons','${l.id}')">Padam</button></td></tr>`; }).join('')}</table></div>` : '<div class="empty">Belum ada pelajaran.</div>'}</div>` + nextBtn('generate', 'Seterusnya: Semak & Jana');
   },
 
   generate() {
@@ -347,10 +388,10 @@ const VIEWS = {
     `<div class="card"><h3>Semakan data</h3>
       ${issues.length ? `<ul>${issues.map(i => `<li style="margin:6px 0;color:${i.lvl === 'err' ? 'var(--red)' : 'var(--amber)'}">${i.lvl === 'err' ? '✖' : '⚠'} ${i.msg}</li>`).join('')}</ul>` : '<p class="pill ok">✔ Semua data kelihatan baik.</p>'}
     </div>
-    <div class="card hero"><h3>Jana jadual</h3><p class="muted">Slot yang dikunci 🔒 dikekalkan. Penjana akan mencuba berulang kali dan menyimpan keputusan terbaik.</p>
+    <div class="card hero"><h3>Jana jadual</h3><p class="muted">Slot yang dikunci 🔒 (termasuk yang diimport dari Google Sheet) dikekalkan. Penjana hanya mengisi waktu yang belum disusun dan menyimpan keputusan terbaik.</p>
       <div class="grid2" style="max-width:640px">
         <div><label>Masa cubaan (saat)</label><input id="g_time" type="number" min="2" max="120" value="10"></div>
-        <div><label>Elak guru mengajar lebih dari (berturut-turut)</label><input id="g_consec" type="number" min="0" max="12" value="4"></div>
+        <div><label>Maks waktu berturut-turut guru (0 = tiada had)</label><input id="g_consec" type="number" min="0" max="20" value="0"></div>
       </div>
       <div class="row" style="margin-top:14px">
         <button class="btn pri big" id="genBtn" ${errs.length ? 'disabled style="opacity:.5"' : ''} onclick="runGenerate()">⚡ Jana Jadual</button>
@@ -364,28 +405,29 @@ const VIEWS = {
     const S = DB.settings;
     const list = viewState.type === 'class' ? DB.classes : viewState.type === 'teacher' ? DB.teachers : DB.rooms;
     if (!list.find(x => x.id === viewState.id)) viewState.id = list[0]?.id || '';
-    const totalUnits = DB.lessons.reduce((a, l) => a + l.perWeek, 0);
+    const totalUnits = sumPeriods(DB.lessons);
     const placed = DB.cards.reduce((a, c) => a + c.len, 0);
-    let body = '';
-    if (!list.length) body = '<div class="empty">Tiada data untuk dipaparkan.</div>';
-    else body = gridHTML(viewState.type, viewState.id, true);
-    const unplaced = viewState.type === 'class' || viewState.type === 'teacher' ? unplacedFor(viewState.type, viewState.id) : [];
+    const body = list.length ? gridHTML(viewState.type, viewState.id, true) : '<div class="empty">Tiada data untuk dipaparkan.</div>';
+    const unplaced = viewState.type !== 'room' && viewState.id ? unplacedFor(viewState.type, viewState.id) : [];
+    const load = viewState.type === 'teacher' ? cardsFor('teacher', viewState.id).reduce((a, c) => a + c.len, 0) : null;
     return head('Jadual Waktu', `${esc(S.school)} · ${esc(S.year)} · ${placed}/${totalUnits} waktu disusun`,
       `<button class="btn" onclick="window.print()">🖨 Cetak paparan</button><button class="btn" onclick="printAll()">🖨 Cetak semua ${viewState.type === 'class' ? 'kelas' : viewState.type === 'teacher' ? 'guru' : 'bilik'}</button><button class="btn" onclick="exportCSV()">CSV</button>`) +
     `<div class="card no-print"><div class="row">
       <div style="display:flex;gap:6px">${[['class','Kelas'],['teacher','Guru'],['room','Bilik']].map(t => `<button class="btn ${viewState.type === t[0] ? 'pri' : ''}" onclick="viewState.type='${t[0]}';viewState.id='';render()">${t[1]}</button>`).join('')}</div>
-      <div style="min-width:240px;flex:1;max-width:360px"><select onchange="viewState.id=this.value;render()">${opts(list, viewState.id)}</select></div>
+      <div style="min-width:240px;flex:1;max-width:380px"><select onchange="viewState.id=this.value;render()">${opts(list, viewState.id)}</select></div>
+      ${load !== null ? `<span class="pill">${load} waktu seminggu</span>` : ''}
       <span class="muted" style="font-size:12px">Seret kad untuk alih · klik kad untuk kunci/buka/buang</span></div></div>
     <div class="card" id="printArea">
       <div class="print-only"><h2>${esc(nameOf(viewState.type, viewState.id))}</h2><div class="muted">${esc(S.school)} · ${esc(S.year)}</div></div>
       <div class="tt-wrap">${body}</div>
-      ${unplaced.length ? `<div class="no-print" style="margin-top:14px"><b style="color:var(--red)">Belum disusun (${unplaced.reduce((a, u) => a + u.len, 0)} waktu)</b> <span class="muted">— seret ke slot kosong</span>
-        <div class="unplaced">${unplaced.map(u => { const s = subj(u.l.subjectId); return `<div class="chip" draggable="true" data-new="${u.l.id}" data-len="${u.len}" style="background:${s.color};color:${contrast(s.color)}">${esc(s.short)} · ${esc(viewState.type === 'class' ? teach(u.l.teacherId).short : klass(u.l.classId).name)}${u.len > 1 ? ' ×' + u.len : ''}</div>`; }).join('')}</div></div>` : ''}
+      ${unplaced.length ? `<div class="no-print" style="margin-top:14px"><b style="color:var(--red)">Belum disusun (${unplaced.reduce((a, u) => a + u.len, 0)} waktu)</b> <span class="muted">— seret ke slot kosong, atau tekan Jana</span>
+        <div class="unplaced">${unplaced.map(u => { const s = subj(u.l.subjectId); return `<div class="chip" draggable="true" data-new="${u.l.id}" data-len="${u.len}" style="background:${s.color};color:${contrast(s.color)}">${esc(s.short)} · ${esc(viewState.type === 'class' ? lTeachersShort(u.l) : lClassesShort(u.l))}${u.len > 1 ? ' ×' + u.len : ''}</div>`; }).join('')}</div></div>` : ''}
     </div><div id="printAll" class="print-only"></div>`;
   }
 };
 AFTER.view = bindGrid;
 AFTER.home = () => { if (deferredPrompt) { const b = $('#installBtn'); if (b) b.style.display = ''; } };
+AFTER.sheet = () => { const x = $('#xlsxIn'); if (x) x.onchange = e => { const f = e.target.files[0]; if (f) importXlsxFile(f); e.target.value = ''; }; };
 
 /* =========================================================
    CRUD
@@ -393,25 +435,24 @@ AFTER.home = () => { if (deferredPrompt) { const b = $('#installBtn'); if (b) b.
 function saveSettings() {
   const s = DB.settings;
   s.school = $('#s_school').value.trim(); s.year = $('#s_year').value.trim();
-  const order = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
-  const days = [...document.querySelectorAll('.s_day:checked')].map(x => x.value).sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  const days = [...document.querySelectorAll('.s_day:checked')].map(x => x.value).sort((a, b) => ALL_DAYS.indexOf(a) - ALL_DAYS.indexOf(b));
   if (!days.length) return toast('Pilih sekurang-kurangnya satu hari.');
   const oldDays = s.days.slice();
-  const P = Math.min(16, Math.max(1, parseInt($('#s_periods').value) || 1));
+  const P = Math.min(20, Math.max(1, parseInt($('#s_periods').value) || 1));
   document.querySelectorAll('.t_s').forEach(i => { if (s.times[i.dataset.i]) s.times[i.dataset.i].s = i.value; });
   document.querySelectorAll('.t_e').forEach(i => { if (s.times[i.dataset.i]) s.times[i.dataset.i].e = i.value; });
-  s.breaks = [...document.querySelectorAll('.t_b:checked')].map(i => +i.dataset.i).filter(i => i < P - 1);
-  // remap day indexes in cards and teacher off-times when days change
+  s.breaks = [...document.querySelectorAll('.t_b:checked')].map(i => +i.dataset.i);
   if (days.join() !== oldDays.join()) {
     const map = oldDays.map(d => days.indexOf(d));
     DB.cards = DB.cards.map(c => ({ ...c, day: map[c.day] })).filter(c => c.day >= 0);
-    DB.teachers.forEach(t => { const n = {}; for (const k in t.off) { const [d, p] = k.split('-').map(Number); if (map[d] >= 0) n[map[d] + '-' + p] = true; } t.off = n; });
+    const remap = o => { const n = {}; for (const k in o) { const [d, p] = k.split('-').map(Number); if (map[d] >= 0) n[map[d] + '-' + p] = true; } return n; };
+    [...DB.teachers, ...DB.classes, ...DB.subjects].forEach(x => x.off = remap(x.off));
   }
   s.days = days; s.periods = P;
   normalize(); save(); render(); toast('Maklumat asas disimpan.');
 }
 function autoTimes() {
-  const P = Math.min(16, Math.max(1, parseInt($('#s_periods').value) || 1));
+  const P = Math.min(20, Math.max(1, parseInt($('#s_periods').value) || 1));
   const dur = Math.max(5, parseInt($('#s_dur').value) || 30);
   DB.settings.periods = P; DB.settings.times = defaultTimes(P, $('#s_start').value || '07:30', dur);
   DB.settings.school = $('#s_school').value.trim(); DB.settings.year = $('#s_year').value.trim();
@@ -419,87 +460,95 @@ function autoTimes() {
 }
 function removeItem(kind, id) {
   const labels = { subjects: 'subjek', classes: 'kelas', rooms: 'bilik', teachers: 'guru', lessons: 'pelajaran' };
-  const field = { subjects: 'subjectId', classes: 'classId', teachers: 'teacherId' }[kind];
-  const affected = field ? DB.lessons.filter(l => l[field] === id).length : 0;
-  if (!confirm(`Padam ${labels[kind]} ini?${affected ? `\n${affected} pelajaran berkaitan juga akan dipadam.` : ''}`)) return;
+  let msg = `Padam ${labels[kind]} ini?`;
+  if (kind === 'subjects') { const n = DB.lessons.filter(l => l.subjectId === id).length; if (n) msg += `\n${n} pelajaran berkaitan juga akan dipadam.`; }
+  if (!confirm(msg)) return;
   DB[kind] = DB[kind].filter(x => x.id !== id);
-  if (field) DB.lessons = DB.lessons.filter(l => l[field] !== id);
+  if (kind === 'subjects') DB.lessons = DB.lessons.filter(l => l.subjectId !== id);
+  if (kind === 'classes') { DB.lessons.forEach(l => l.classIds = l.classIds.filter(c => c !== id)); DB.lessons = DB.lessons.filter(l => l.classIds.length); }
+  if (kind === 'teachers') DB.lessons.forEach(l => l.teacherIds = l.teacherIds.filter(t => t !== id));
   if (kind === 'rooms') DB.lessons.forEach(l => { if (l.roomId === id) l.roomId = ''; });
   normalize(); save(); render();
 }
 function modalForm(title, fields, onSave) {
   openModal(`<h3>${title}</h3><form id="mf">${fields}<div class="actions"><button type="button" class="btn" onclick="closeModal()">Batal</button><button class="btn pri">Simpan</button></div></form>`);
-  $('#mf').onsubmit = e => { e.preventDefault(); if (onSave() !== false) { closeModal(); save(); render(); } };
+  $('#mf').onsubmit = e => { e.preventDefault(); if (onSave() !== false) { closeModal(); normalize(); save(); render(); } };
 }
 function editSubject(id) {
   const s = byId(DB.subjects, id) || { name: '', short: '', color: PALETTE[DB.subjects.length % PALETTE.length] };
-  modalForm(id ? 'Ubah subjek' : 'Subjek baharu', `<div class="grid2"><div><label>Nama</label><input id="f_name" required value="${esc(s.name)}"></div><div><label>Singkatan</label><input id="f_short" maxlength="6" value="${esc(s.short)}"></div></div><div style="margin-top:10px"><label>Warna</label><input type="color" id="f_color" value="${s.color}"></div>`, () => {
+  modalForm(id ? 'Ubah subjek' : 'Subjek baharu', `<div class="grid2"><div><label>Nama</label><input id="f_name" required value="${esc(s.name)}"></div><div><label>Singkatan</label><input id="f_short" maxlength="12" value="${esc(s.short)}"></div></div><div style="margin-top:10px"><label>Warna</label><input type="color" id="f_color" value="${s.color}"></div>`, () => {
     const name = $('#f_name').value.trim(); if (!name) return false;
     const o = { name, short: $('#f_short').value.trim() || name.slice(0, 3).toUpperCase(), color: $('#f_color').value };
-    if (id) Object.assign(s, o); else DB.subjects.push({ id: uid(), ...o });
+    if (id) Object.assign(s, o); else DB.subjects.push({ id: uid(), off: {}, ...o });
   });
 }
 function editClass(id) {
-  const c = byId(DB.classes, id) || { name: '' };
-  modalForm(id ? 'Ubah kelas' : 'Kelas baharu', `<label>Nama kelas</label><input id="f_name" required value="${esc(c.name)}" placeholder="cth: 1 Amanah">${id ? '' : '<p class="muted" style="font-size:12px">Tip: pisahkan dengan koma untuk tambah banyak kelas sekaligus (cth: 1A, 1B, 1C).</p>'}`, () => {
+  const c = byId(DB.classes, id) || { name: '', short: '' };
+  modalForm(id ? 'Ubah kelas' : 'Kelas baharu', `<label>Nama kelas</label><input id="f_name" required value="${esc(c.name)}" placeholder="cth: 1 Amanah">${id ? `<div style="margin-top:10px"><label>Singkatan</label><input id="f_short" value="${esc(c.short)}"></div>` : '<p class="muted" style="font-size:12px">Tip: pisahkan dengan koma untuk tambah banyak kelas sekaligus (cth: 1A, 1B, 1C).</p>'}`, () => {
     const v = $('#f_name').value.trim(); if (!v) return false;
-    if (id) c.name = v; else v.split(',').map(x => x.trim()).filter(Boolean).forEach(n => DB.classes.push({ id: uid(), name: n }));
+    if (id) { c.name = v; c.short = $('#f_short').value.trim() || v; }
+    else v.split(',').map(x => x.trim()).filter(Boolean).forEach(n => DB.classes.push({ id: uid(), name: n, short: n, off: {} }));
   });
 }
 function editRoom(id) {
-  const r = byId(DB.rooms, id) || { name: '' };
-  modalForm(id ? 'Ubah bilik' : 'Bilik baharu', `<label>Nama bilik</label><input id="f_name" required value="${esc(r.name)}">`, () => {
+  const r = byId(DB.rooms, id) || { name: '', short: '' };
+  modalForm(id ? 'Ubah bilik' : 'Bilik baharu', `<div class="grid2"><div><label>Nama bilik</label><input id="f_name" required value="${esc(r.name)}"></div><div><label>Singkatan</label><input id="f_short" value="${esc(r.short)}"></div></div>`, () => {
     const v = $('#f_name').value.trim(); if (!v) return false;
-    if (id) r.name = v; else DB.rooms.push({ id: uid(), name: v });
+    const o = { name: v, short: $('#f_short').value.trim() || v };
+    if (id) Object.assign(r, o); else DB.rooms.push({ id: uid(), ...o });
   });
 }
 function editTeacher(id) {
   const t = byId(DB.teachers, id) || { name: '', short: '', color: PALETTE[DB.teachers.length % PALETTE.length], maxDay: 0, off: {} };
-  modalForm(id ? 'Ubah guru' : 'Guru baharu', `<div class="grid2"><div><label>Nama</label><input id="f_name" required value="${esc(t.name)}"></div><div><label>Singkatan</label><input id="f_short" maxlength="6" value="${esc(t.short)}"></div>
-    <div><label>Maks waktu sehari (0 = tiada had)</label><input id="f_max" type="number" min="0" max="16" value="${t.maxDay}"></div><div><label>Warna</label><input type="color" id="f_color" value="${t.color}"></div></div>`, () => {
+  modalForm(id ? 'Ubah guru' : 'Guru baharu', `<div class="grid2"><div><label>Nama</label><input id="f_name" required value="${esc(t.name)}"></div><div><label>Singkatan</label><input id="f_short" maxlength="12" value="${esc(t.short)}"></div>
+    <div><label>Maks waktu sehari (0 = tiada had)</label><input id="f_max" type="number" min="0" max="20" value="${t.maxDay}"></div><div><label>Warna</label><input type="color" id="f_color" value="${t.color}"></div></div>`, () => {
     const name = $('#f_name').value.trim(); if (!name) return false;
-    const o = { name, short: $('#f_short').value.trim() || name.replace(/^(En\.|Pn\.|Cik|Ust\.|Dr\.)\s*/i, '').slice(0, 3).toUpperCase(), color: $('#f_color').value, maxDay: Math.max(0, parseInt($('#f_max').value) || 0) };
+    const o = { name, short: $('#f_short').value.trim() || name.replace(/^(En\.|Pn\.|Cik|Ust\.|Ustazah|Ustaz|Dr\.)\s*/i, '').slice(0, 5).toUpperCase(), color: $('#f_color').value, maxDay: Math.max(0, parseInt($('#f_max').value) || 0) };
     if (id) Object.assign(t, o); else DB.teachers.push({ id: uid(), off: {}, ...o });
   });
 }
 function colorAll() { DB.teachers.forEach((t, i) => t.color = PALETTE[i % PALETTE.length]); save(); render(); toast('Warna guru ditetapkan.'); }
-function editOff(id) {
-  const t = byId(DB.teachers, id); const S = DB.settings; const off = { ...t.off };
-  const draw = () => `<table class="offgrid"><tr><th></th>${S.times.map((_, p) => `<th>${p + 1}</th>`).join('')}</tr>${S.days.map((d, di) => `<tr><th style="text-align:left">${d.slice(0, 3)}</th>${S.times.map((_, p) => `<td data-k="${di}-${p}" class="${off[di + '-' + p] ? 'x' : ''}">${off[di + '-' + p] ? '✖' : ''}</td>`).join('')}</tr>`).join('')}</table>`;
-  openModal(`<h3>Masa tidak hadir — ${esc(t.name)}</h3><p class="muted">Klik slot di mana guru <b>tidak boleh</b> mengajar. Klik nama hari untuk togol sehari penuh.</p><div class="tt-wrap" id="offw">${draw()}</div>
+function editOff(kind, id) {
+  const o = byId(DB[kind], id); const S = DB.settings; const off = { ...o.off };
+  const label = kind === 'teachers' ? 'Masa tidak hadir' : 'Masa tidak boleh dijadualkan';
+  const draw = () => `<table class="offgrid"><tr><th></th>${S.times.map((_, p) => `<th>${p + 1}</th>`).join('')}</tr>${S.days.map((d, di) => `<tr><th style="text-align:left;cursor:pointer" data-day="${di}">${d.slice(0, 3)}</th>${S.times.map((_, p) => `<td data-k="${di}-${p}" class="${off[di + '-' + p] ? 'x' : ''}">${off[di + '-' + p] ? '✖' : ''}</td>`).join('')}</tr>`).join('')}</table>`;
+  openModal(`<h3>${label} — ${esc(o.name)}</h3><p class="muted">Klik slot yang <b>tidak boleh</b> digunakan. Klik nama hari untuk togol sehari penuh.</p><div class="tt-wrap" id="offw">${draw()}</div>
     <div class="actions"><button class="btn" id="offClr">Kosongkan</button><button class="btn" onclick="closeModal()">Batal</button><button class="btn pri" id="offSave">Simpan</button></div>`);
+  const redraw = () => { $('#offw').innerHTML = draw(); bind(); };
   const bind = () => {
-    document.querySelectorAll('#offw td').forEach(td => td.onclick = () => { const k = td.dataset.k; if (off[k]) delete off[k]; else off[k] = true; $('#offw').innerHTML = draw(); bind(); });
-    document.querySelectorAll('#offw tr th:first-child').forEach((th, i) => { if (i === 0) return; th.style.cursor = 'pointer'; th.onclick = () => { const d = i - 1; const all = S.times.every((_, p) => off[d + '-' + p]); S.times.forEach((_, p) => { if (all) delete off[d + '-' + p]; else off[d + '-' + p] = true; }); $('#offw').innerHTML = draw(); bind(); }; });
+    document.querySelectorAll('#offw td').forEach(td => td.onclick = () => { const k = td.dataset.k; if (off[k]) delete off[k]; else off[k] = true; redraw(); });
+    document.querySelectorAll('#offw th[data-day]').forEach(th => th.onclick = () => { const d = +th.dataset.day; const all = S.times.every((_, p) => off[d + '-' + p]); S.times.forEach((_, p) => { if (all) delete off[d + '-' + p]; else off[d + '-' + p] = true; }); redraw(); });
   };
   bind();
-  $('#offClr').onclick = () => { for (const k in off) delete off[k]; $('#offw').innerHTML = draw(); bind(); };
-  $('#offSave').onclick = () => { t.off = off; save(); closeModal(); render(); toast('Masa tidak hadir disimpan.'); };
+  $('#offClr').onclick = () => { for (const k in off) delete off[k]; redraw(); };
+  $('#offSave').onclick = () => { o.off = off; save(); closeModal(); render(); toast('Disimpan.'); };
 }
 function editLesson(id) {
-  if (!DB.classes.length || !DB.subjects.length || !DB.teachers.length) return toast('Tambah kelas, subjek dan guru dahulu.');
-  const l = byId(DB.lessons, id) || { classId: viewState.lf && byId(DB.classes, viewState.lf) ? viewState.lf : DB.classes[0].id, subjectId: DB.subjects[0].id, teacherId: viewState.lf && byId(DB.teachers, viewState.lf) ? viewState.lf : DB.teachers[0].id, roomId: '', perWeek: 2, len: 1 };
+  if (!DB.classes.length || !DB.subjects.length) return toast('Tambah kelas dan subjek dahulu.');
+  const l = byId(DB.lessons, id) || { classIds: [viewState.lf && byId(DB.classes, viewState.lf) ? viewState.lf : DB.classes[0].id], subjectId: DB.subjects[0].id, teacherIds: viewState.lf && byId(DB.teachers, viewState.lf) ? [viewState.lf] : (DB.teachers[0] ? [DB.teachers[0].id] : []), roomId: '', perWeek: 2, len: 1 };
   modalForm(id ? 'Ubah pelajaran' : 'Pelajaran baharu', `<div class="grid2">
-    <div><label>Kelas</label><select id="f_class" ${id ? '' : 'multiple size="4"'}>${opts(DB.classes, l.classId)}</select>${id ? '' : '<small class="muted">Ctrl/⌘ untuk pilih banyak kelas</small>'}</div>
+    <div><label>Kelas</label><select id="f_class" multiple size="5">${opts(DB.classes, l.classIds)}</select><small class="muted">Ctrl/⌘ untuk pilih lebih dari satu (kelas bergabung)</small></div>
+    <div><label>Guru</label><select id="f_teach" multiple size="5">${opts(DB.teachers, l.teacherIds)}</select><small class="muted">Boleh pilih lebih dari satu (guru bersama)</small></div>
     <div><label>Subjek</label><select id="f_subj">${opts(DB.subjects, l.subjectId)}</select></div>
-    <div><label>Guru</label><select id="f_teach">${opts(DB.teachers, l.teacherId)}</select></div>
     <div><label>Bilik (pilihan)</label><select id="f_room">${opts(DB.rooms, l.roomId, x => x.name, '— Bilik darjah —')}</select></div>
-    <div><label>Waktu seminggu</label><input id="f_pw" type="number" min="1" max="40" value="${l.perWeek}"></div>
+    <div><label>Jumlah waktu seminggu</label><input id="f_pw" type="number" min="1" max="60" value="${l.perWeek}"></div>
     <div><label>Panjang sesi</label><select id="f_len">${[1, 2, 3, 4].map(n => `<option value="${n}" ${l.len === n ? 'selected' : ''}>${n === 1 ? 'Single (1 waktu)' : n === 2 ? 'Berkembar (2 waktu)' : n + ' waktu'}</option>`).join('')}</select></div>
   </div><p class="muted" style="font-size:12px">Contoh: 5 waktu seminggu dengan sesi berkembar = 2 sesi berkembar + 1 single.</p>`, () => {
-    const o = { subjectId: $('#f_subj').value, teacherId: $('#f_teach').value, roomId: $('#f_room').value, perWeek: Math.max(1, parseInt($('#f_pw').value) || 1), len: parseInt($('#f_len').value) || 1 };
+    const classIds = [...$('#f_class').selectedOptions].map(x => x.value);
+    if (!classIds.length) { toast('Pilih kelas.'); return false; }
+    const o = { classIds, teacherIds: [...$('#f_teach').selectedOptions].map(x => x.value), subjectId: $('#f_subj').value, roomId: $('#f_room').value, perWeek: Math.max(1, parseInt($('#f_pw').value) || 1), len: parseInt($('#f_len').value) || 1 };
     if (o.len > DB.settings.periods) { toast('Panjang sesi melebihi bilangan waktu sehari.'); return false; }
-    if (id) { const changed = l.perWeek !== o.perWeek || l.len !== o.len; Object.assign(l, o); if (changed) DB.cards = DB.cards.filter(c => c.lessonId !== id); }
-    else { const cls = [...$('#f_class').selectedOptions].map(x => x.value); if (!cls.length) { toast('Pilih kelas.'); return false; } cls.forEach(c => DB.lessons.push({ id: uid(), classId: c, ...o })); }
+    if (id) { Object.assign(l, o); DB.cards = DB.cards.filter(c => c.lessonId !== id); }
+    else DB.lessons.push({ id: uid(), ...o });
   });
 }
 function copyLessons() {
   if (DB.classes.length < 2) return toast('Perlukan sekurang-kurangnya 2 kelas.');
-  modalForm('Salin pelajaran ke kelas lain', `<div class="grid2"><div><label>Dari kelas</label><select id="f_from">${opts(DB.classes)}</select></div><div><label>Ke kelas</label><select id="f_to" multiple size="5">${opts(DB.classes)}</select></div></div><p class="muted" style="font-size:12px">Subjek, guru, bilik dan bilangan waktu akan disalin.</p>`, () => {
+  modalForm('Salin pelajaran ke kelas lain', `<div class="grid2"><div><label>Dari kelas</label><select id="f_from">${opts(DB.classes)}</select></div><div><label>Ke kelas</label><select id="f_to" multiple size="5">${opts(DB.classes)}</select></div></div><p class="muted" style="font-size:12px">Hanya pelajaran kelas tunggal disalin. Subjek, guru, bilik dan bilangan waktu disalin.</p>`, () => {
     const from = $('#f_from').value, to = [...$('#f_to').selectedOptions].map(x => x.value).filter(x => x !== from);
     if (!to.length) { toast('Pilih kelas destinasi.'); return false; }
-    const src = DB.lessons.filter(l => l.classId === from);
-    to.forEach(c => src.forEach(l => DB.lessons.push({ ...l, id: uid(), classId: c })));
+    const src = DB.lessons.filter(l => l.classIds.length === 1 && l.classIds[0] === from);
+    to.forEach(c => src.forEach(l => DB.lessons.push({ ...l, id: uid(), classIds: [c], teacherIds: l.teacherIds.slice() })));
     toast(`${src.length * to.length} pelajaran disalin.`);
   });
 }
@@ -507,22 +556,22 @@ function copyLessons() {
 /* =========================================================
    CHECK DATA
    ========================================================= */
+function countOff(off) { const D = DB.settings.days.length, P = DB.settings.periods; return Object.keys(off).filter(k => { const [d, p] = k.split('-').map(Number); return d < D && p < P; }).length; }
 function checkData() {
   const S = DB.settings, D = S.days.length, P = S.periods, cap = D * P, out = [];
   if (!DB.classes.length) out.push({ lvl: 'err', msg: 'Tiada kelas.' });
-  if (!DB.teachers.length) out.push({ lvl: 'err', msg: 'Tiada guru.' });
   if (!DB.lessons.length) out.push({ lvl: 'err', msg: 'Tiada pelajaran.' });
-  DB.classes.forEach(c => { const u = DB.lessons.filter(l => l.classId === c.id).reduce((a, l) => a + l.perWeek, 0); if (u > cap) out.push({ lvl: 'err', msg: `Kelas <b>${esc(c.name)}</b> mempunyai ${u} waktu tetapi hanya ${cap} slot seminggu.` }); });
+  DB.classes.forEach(c => { const u = sumPeriods(DB.lessons.filter(l => l.classIds.includes(c.id))); const avail = cap - countOff(c.off); if (u > avail) out.push({ lvl: 'err', msg: `Kelas <b>${esc(c.name)}</b> mempunyai ${u} waktu tetapi hanya ${avail} slot tersedia.` }); });
   DB.teachers.forEach(t => {
-    const u = DB.lessons.filter(l => l.teacherId === t.id).reduce((a, l) => a + l.perWeek, 0);
-    let avail = cap - Object.keys(t.off).filter(k => +k.split('-')[0] < D && +k.split('-')[1] < P).length;
+    const u = sumPeriods(DB.lessons.filter(l => l.teacherIds.includes(t.id)));
+    let avail = cap - countOff(t.off);
     if (t.maxDay) avail = Math.min(avail, t.maxDay * D);
     if (u > avail) out.push({ lvl: 'err', msg: `Guru <b>${esc(t.name)}</b> perlu mengajar ${u} waktu tetapi hanya ${avail} slot tersedia.` });
-    else if (u > avail * 0.9 && u > 0) out.push({ lvl: 'warn', msg: `Guru <b>${esc(t.name)}</b> hampir penuh (${u}/${avail}). Penjanaan mungkin sukar.` });
+    else if (u > avail * 0.9 && u > 0) out.push({ lvl: 'warn', msg: `Guru <b>${esc(t.name)}</b> hampir penuh (${u}/${avail}).` });
   });
-  DB.rooms.forEach(r => { const u = DB.lessons.filter(l => l.roomId === r.id).reduce((a, l) => a + l.perWeek, 0); if (u > cap) out.push({ lvl: 'err', msg: `Bilik <b>${esc(r.name)}</b> diperlukan ${u} waktu, melebihi ${cap} slot.` }); });
-  DB.lessons.forEach(l => { if (l.len > P) out.push({ lvl: 'err', msg: `Pelajaran ${esc(subj(l.subjectId).name)} (${esc(klass(l.classId).name)}) lebih panjang dari sehari.` }); });
-  const noLesson = DB.classes.filter(c => !DB.lessons.some(l => l.classId === c.id));
+  DB.rooms.forEach(r => { const u = sumPeriods(DB.lessons.filter(l => l.roomId === r.id)); if (u > cap) out.push({ lvl: 'err', msg: `Bilik <b>${esc(r.name)}</b> diperlukan ${u} waktu, melebihi ${cap} slot.` }); });
+  DB.lessons.forEach(l => { if (l.len > P) out.push({ lvl: 'err', msg: `Pelajaran ${esc(subj(l.subjectId).name)} (${esc(lClasses(l))}) lebih panjang dari sehari.` }); });
+  const noLesson = DB.classes.filter(c => !DB.lessons.some(l => l.classIds.includes(c.id)));
   if (noLesson.length) out.push({ lvl: 'warn', msg: `Kelas tanpa pelajaran: ${noLesson.map(c => esc(c.name)).join(', ')}` });
   return out;
 }
@@ -536,72 +585,91 @@ function splitUnits(l) {
   if (rem > 0) out.push(rem);
   return out;
 }
+function remainingParts(l, cards) {
+  const parts = splitUnits(l);
+  cards.filter(c => c.lessonId === l.id).forEach(c => {
+    const i = parts.indexOf(c.len);
+    if (i >= 0) parts.splice(i, 1);
+    else { let r = c.len; parts.sort((a, b) => b - a); while (r > 0 && parts.length) { const x = parts.shift(); if (x > r) { parts.push(x - r); r = 0; } else r -= x; } }
+  });
+  return parts;
+}
 function buildCtx(consecMax) {
-  const S = DB.settings, D = S.days.length, P = S.periods;
+  const S = DB.settings;
   const lmap = {}; DB.lessons.forEach(l => lmap[l.id] = l);
   const tMap = {}; DB.teachers.forEach(t => tMap[t.id] = t);
+  const cMap = {}; DB.classes.forEach(c => cMap[c.id] = c);
+  const sMap = {}; DB.subjects.forEach(s => sMap[s.id] = s);
   const sessions = {}; DB.lessons.forEach(l => sessions[l.id] = splitUnits(l).length);
-  return { D, P, lmap, tMap, sessions, consecMax, breaks: new Set(S.breaks) };
+  return { D: S.days.length, P: S.periods, lmap, tMap, cMap, sMap, sessions, consecMax, breaks: new Set(S.breaks) };
 }
-function emptyOcc(ctx) {
-  return { cls: {}, tch: {}, room: {}, perDay: {}, tDay: {} };
-}
+const emptyOcc = () => ({ cls: {}, tch: {}, room: {}, perDay: {}, tDay: {} });
 const key3 = (d, p) => d * 100 + p;
 function occAdd(occ, ctx, card, sign) {
-  const l = ctx.lmap[card.lessonId];
+  const l = ctx.lmap[card.lessonId]; if (!l) return;
+  const set = (o, id, s) => { o[id] = o[id] || {}; if (sign > 0) o[id][s] = card; else if (o[id][s] === card) delete o[id][s]; };
   for (let k = 0; k < card.len; k++) {
     const s = key3(card.day, card.period + k);
-    const set = (o, id) => { o[id] = o[id] || {}; if (sign > 0) o[id][s] = card; else delete o[id][s]; };
-    set(occ.cls, l.classId); set(occ.tch, l.teacherId); if (l.roomId) set(occ.room, l.roomId);
+    l.classIds.forEach(id => set(occ.cls, id, s));
+    l.teacherIds.forEach(id => set(occ.tch, id, s));
+    if (l.roomId) set(occ.room, l.roomId, s);
   }
   const pd = l.id + ':' + card.day; occ.perDay[pd] = (occ.perDay[pd] || 0) + sign;
-  const td = l.teacherId + ':' + card.day; occ.tDay[td] = (occ.tDay[td] || 0) + sign * card.len;
+  l.teacherIds.forEach(t => { const td = t + ':' + card.day; occ.tDay[td] = (occ.tDay[td] || 0) + sign * card.len; });
 }
-// returns list of conflicting cards (hard), or null if structurally impossible
-function conflicts(occ, ctx, lessonId, len, d, p, ignore) {
-  const l = ctx.lmap[lessonId], t = ctx.tMap[l.teacherId];
-  if (p + len > ctx.P) return null;
+// null = slot structurally impossible; [] = free; [cards] = conflicting cards
+function conflicts(occ, ctx, lessonId, len, d, p) {
+  const l = ctx.lmap[lessonId];
+  if (p < 0 || p + len > ctx.P || d < 0 || d >= ctx.D) return null;
+  const sOff = ctx.sMap[l.subjectId]?.off || {};
   for (let k = 0; k < len; k++) {
-    if (t && t.off[d + '-' + (p + k)]) return null;
+    const kk = d + '-' + (p + k);
+    if (sOff[kk]) return null;
+    for (const t of l.teacherIds) if (ctx.tMap[t]?.off[kk]) return null;
+    for (const c of l.classIds) if (ctx.cMap[c]?.off[kk]) return null;
   }
   const found = new Set();
   for (let k = 0; k < len; k++) {
     const s = key3(d, p + k);
-    const a = occ.cls[l.classId]?.[s], b = occ.tch[l.teacherId]?.[s], c = l.roomId ? occ.room[l.roomId]?.[s] : null;
-    [a, b, c].forEach(x => { if (x && x !== ignore) found.add(x); });
+    l.classIds.forEach(id => { const x = occ.cls[id]?.[s]; if (x) found.add(x); });
+    l.teacherIds.forEach(id => { const x = occ.tch[id]?.[s]; if (x) found.add(x); });
+    if (l.roomId) { const x = occ.room[l.roomId]?.[s]; if (x) found.add(x); }
   }
   return [...found];
 }
-function softOk(occ, ctx, lessonId, len, d, p, ignore) {
-  const l = ctx.lmap[lessonId], t = ctx.tMap[l.teacherId];
-  const ign = ignore && ignore.lessonId === lessonId && ignore.day === d ? 1 : 0;
-  const limit = Math.ceil(ctx.sessions[l.id] / ctx.D);
-  if ((occ.perDay[l.id + ':' + d] || 0) - ign >= limit) return false;
-  if (t && t.maxDay) { const ignT = ignore && ctx.lmap[ignore.lessonId].teacherId === l.teacherId && ignore.day === d ? ignore.len : 0; if ((occ.tDay[l.teacherId + ':' + d] || 0) - ignT + len > t.maxDay) return false; }
-  if (ctx.consecMax > 0) {
-    const busy = q => q >= p && q < p + len ? true : (!!occ.tch[l.teacherId]?.[key3(d, q)] && occ.tch[l.teacherId][key3(d, q)] !== ignore);
-    let run = 0, maxRun = 0;
-    for (let q = 0; q < ctx.P; q++) { if (busy(q)) { run++; maxRun = Math.max(maxRun, run); } else run = 0; if (ctx.breaks.has(q)) run = 0; }
-    if (maxRun > ctx.consecMax) return false;
+function softOk(occ, ctx, lessonId, len, d, p) {
+  const l = ctx.lmap[lessonId];
+  const limit = Math.max(1, Math.ceil(ctx.sessions[l.id] / ctx.D));
+  if ((occ.perDay[l.id + ':' + d] || 0) >= limit) return false;
+  for (const tid of l.teacherIds) {
+    const t = ctx.tMap[tid]; if (!t) continue;
+    if (t.maxDay && (occ.tDay[tid + ':' + d] || 0) + len > t.maxDay) return false;
+    if (ctx.consecMax > 0) {
+      let run = 0;
+      for (let q = 0; q < ctx.P; q++) {
+        const busy = (q >= p && q < p + len) || !!occ.tch[tid]?.[key3(d, q)];
+        run = busy ? run + 1 : 0;
+        if (run > ctx.consecMax) return false;
+        if (ctx.breaks.has(q)) run = 0;
+      }
+    }
   }
   return true;
 }
 function score(occ, ctx, lessonId, len, d, p) {
   const l = ctx.lmap[lessonId];
-  let sc = Math.random() * 3;
-  sc += (occ.tDay[l.teacherId + ':' + d] || 0) * 0.8;       // spread teacher load over days
-  sc += p * 0.15;                                             // slightly prefer earlier periods
-  // prefer adjacent to class's existing lessons (fewer gaps for class)
-  const c = occ.cls[l.classId] || {};
-  if (p > 0 && !c[key3(d, p - 1)]) sc += 0.6;
-  const tt = occ.tch[l.teacherId] || {};
-  if ((p > 0 && tt[key3(d, p - 1)]) || tt[key3(d, p + len)]) sc -= 0.4;
+  let sc = Math.random() * 3 + p * 0.12;
+  l.teacherIds.forEach(t => {
+    sc += (occ.tDay[t + ':' + d] || 0) * 0.6;
+    const tt = occ.tch[t] || {};
+    if ((p > 0 && tt[key3(d, p - 1)]) || tt[key3(d, p + len)]) sc -= 0.3;
+  });
+  l.classIds.forEach(c => { const cc = occ.cls[c] || {}; if (p > 0 && !cc[key3(d, p - 1)]) sc += 0.5; });
   return sc;
 }
 function attempt(ctx, lockedCards, units) {
-  const occ = emptyOcc(ctx); const placed = [];
+  const occ = emptyOcc(); const placed = [];
   lockedCards.forEach(c => { occAdd(occ, ctx, c, 1); placed.push(c); });
-  // difficulty ordering with randomness
   const queue = units.map(u => ({ ...u, r: Math.random() })).sort((a, b) => (b.diff + b.r * 2) - (a.diff + a.r * 2));
   const unplaced = []; let budget = units.length * 25;
   const all = [];
@@ -617,19 +685,18 @@ function attempt(ctx, lockedCards, units) {
       if (sc < bestSc) { bestSc = sc; best = [d, p]; }
     }
     if (best) { const c = { lessonId: u.lessonId, day: best[0], period: best[1], len: u.len, locked: false }; occAdd(occ, ctx, c, 1); placed.push(c); continue; }
-    // repair: evict up to 1-2 non-locked conflicting cards
     if (budget-- > 0) {
-      let opts2 = [];
+      const cand = [];
       for (const [d, p] of all) {
         const cf = conflicts(occ, ctx, u.lessonId, u.len, d, p);
         if (!cf || !cf.length || cf.length > 2 || cf.some(x => x.locked)) continue;
         cf.forEach(x => occAdd(occ, ctx, x, -1));
         const ok = softOk(occ, ctx, u.lessonId, u.len, d, p);
         cf.forEach(x => occAdd(occ, ctx, x, 1));
-        if (ok) opts2.push([d, p, cf]);
+        if (ok) cand.push([d, p, cf]);
       }
-      if (opts2.length) {
-        const [d, p, cf] = opts2[Math.floor(Math.random() * opts2.length)];
+      if (cand.length) {
+        const [d, p, cf] = cand[Math.floor(Math.random() * cand.length)];
         cf.forEach(x => { occAdd(occ, ctx, x, -1); placed.splice(placed.indexOf(x), 1); queue.unshift({ lessonId: x.lessonId, len: x.len, diff: 0 }); });
         const c = { lessonId: u.lessonId, day: d, period: p, len: u.len, locked: false }; occAdd(occ, ctx, c, 1); placed.push(c);
         continue;
@@ -646,29 +713,24 @@ function runGenerate() {
   const consec = Math.max(0, parseInt($('#g_consec').value) || 0);
   const ctx = buildCtx(consec);
   const locked = DB.cards.filter(c => c.locked);
-  // units still needed after locked cards
   const units = [];
   DB.lessons.forEach(l => {
-    const lockedLen = locked.filter(c => c.lessonId === l.id).map(c => c.len);
-    const parts = splitUnits(l);
-    lockedLen.forEach(len => { const i = parts.indexOf(len); if (i >= 0) parts.splice(i, 1); else { let r = len; while (r > 0 && parts.length) { const x = parts.pop(); r -= x; } } });
-    const t = ctx.tMap[l.teacherId];
-    const tLoad = DB.lessons.filter(x => x.teacherId === l.teacherId).reduce((a, x) => a + x.perWeek, 0);
-    const diff = tLoad / (ctx.D * ctx.P) * 10 + Object.keys(t?.off || {}).length * 0.2 + (l.roomId ? 3 : 0);
+    const parts = remainingParts(l, locked);
+    const tLoad = l.teacherIds.reduce((a, t) => a + sumPeriods(DB.lessons.filter(x => x.teacherIds.includes(t))), 0);
+    const offs = l.teacherIds.reduce((a, t) => a + Object.keys(ctx.tMap[t]?.off || {}).length, 0) + l.classIds.reduce((a, c) => a + Object.keys(ctx.cMap[c]?.off || {}).length, 0);
+    const diff = tLoad / (ctx.D * ctx.P) * 10 + offs * 0.15 + (l.roomId ? 3 : 0) + l.classIds.length * 2 + l.teacherIds.length * 2;
     parts.forEach(len => units.push({ lessonId: l.id, len, diff: diff + len * 2 }));
   });
-  generating = true;
-  const bar = $('#gbar'), msg = $('#gmsg'), btn = $('#genBtn');
-  btn.disabled = true; btn.textContent = '⏳ Menjana...';
-  const t0 = performance.now(); let best = null, tries = 0;
   const total = units.reduce((a, u) => a + u.len, 0);
+  const bar = $('#gbar'), msg = $('#gmsg'), btn = $('#genBtn');
+  if (!total) { msg.innerHTML = '<span style="color:var(--green)">✔ Semua waktu telah disusun.</span>'; return; }
+  generating = true; btn.disabled = true; btn.textContent = '⏳ Menjana...';
+  const t0 = performance.now(); let best = null, tries = 0;
   const step = () => {
-    const sliceEnd = performance.now() + 120;
-    while (performance.now() < sliceEnd) {
-      const r = attempt(ctx, locked, units); tries++;
-      if (!best || r.missing < best.missing) best = r;
-      if (best.missing === 0) break;
-    }
+    try {
+      const sliceEnd = performance.now() + 120;
+      do { const r = attempt(ctx, locked, units); tries++; if (!best || r.missing < best.missing) best = r; } while (best.missing > 0 && performance.now() < sliceEnd);
+    } catch (e) { generating = false; btn.disabled = false; btn.textContent = '⚡ Jana Jadual'; msg.textContent = 'Ralat: ' + e.message; return; }
     const el = (performance.now() - t0) / 1000;
     bar.style.width = Math.min(100, best.missing === 0 ? 100 : el / secs * 100) + '%';
     msg.textContent = `Cubaan ${tries} · terbaik: ${total - best.missing}/${total} waktu disusun`;
@@ -676,7 +738,7 @@ function runGenerate() {
       DB.cards = best.placed; save(); generating = false;
       btn.disabled = false; btn.textContent = '⚡ Jana Jadual';
       if (best.missing === 0) { msg.innerHTML = `<span style="color:var(--green)">✔ Berjaya! Semua ${total} waktu disusun dalam ${el.toFixed(1)} saat.</span>`; toast('Jadual berjaya dijana!'); setTimeout(() => go('view'), 700); }
-      else { msg.innerHTML = `<span style="color:var(--amber)">⚠ ${best.missing} waktu tidak dapat disusun. Cuba tambah masa, kurangkan kekangan, atau susun secara manual di halaman Jadual Waktu.</span>`; }
+      else msg.innerHTML = `<span style="color:var(--amber)">⚠ ${best.missing} waktu tidak dapat disusun. Cuba tambah masa, kurangkan kekangan, atau susun secara manual di halaman Jadual Waktu.</span>`;
       return;
     }
     setTimeout(step, 0);
@@ -689,26 +751,21 @@ function clearCards(all) {
 }
 
 /* =========================================================
-   GRID RENDER + DRAG & DROP
+   GRID + DRAG & DROP
    ========================================================= */
 function nameOf(type, id) { const o = type === 'class' ? byId(DB.classes, id) : type === 'teacher' ? byId(DB.teachers, id) : byId(DB.rooms, id); return o ? (type === 'class' ? 'Kelas ' : type === 'teacher' ? 'Guru: ' : 'Bilik: ') + o.name : ''; }
-function cardsFor(type, id) {
-  return DB.cards.filter(c => { const l = byId(DB.lessons, c.lessonId); if (!l) return false; return type === 'class' ? l.classId === id : type === 'teacher' ? l.teacherId === id : l.roomId === id; });
-}
+function lessonMatch(l, type, id) { return type === 'class' ? l.classIds.includes(id) : type === 'teacher' ? l.teacherIds.includes(id) : l.roomId === id; }
+function cardsFor(type, id) { return DB.cards.filter(c => { const l = lessonOf(c.lessonId); return l && lessonMatch(l, type, id); }); }
 function unplacedFor(type, id) {
   const out = [];
-  DB.lessons.filter(l => type === 'class' ? l.classId === id : l.teacherId === id).forEach(l => {
-    const parts = splitUnits(l); const have = DB.cards.filter(c => c.lessonId === l.id).map(c => c.len);
-    have.forEach(len => { const i = parts.indexOf(len); if (i >= 0) parts.splice(i, 1); else { let r = len; while (r > 0 && parts.length) r -= parts.pop(); } });
-    parts.forEach(len => out.push({ l, len }));
-  });
+  DB.lessons.filter(l => lessonMatch(l, type, id)).forEach(l => remainingParts(l, DB.cards).forEach(len => out.push({ l, len })));
   return out;
 }
 function gridHTML(type, id, interactive) {
   const S = DB.settings, cards = cardsFor(type, id);
-  const at = {}; cards.forEach(c => at[c.day + '-' + c.period] = c);
-  const covered = {}; cards.forEach(c => { for (let k = 1; k < c.len; k++) covered[c.day + '-' + (c.period + k)] = true; });
-  const t = type === 'teacher' ? byId(DB.teachers, id) : null;
+  const at = {}; cards.forEach(c => { if (!at[c.day + '-' + c.period]) at[c.day + '-' + c.period] = c; });
+  const covered = {}; cards.forEach(c => { if (at[c.day + '-' + c.period] !== c) return; for (let k = 1; k < c.len; k++) covered[c.day + '-' + (c.period + k)] = c; });
+  const obj = type === 'teacher' ? byId(DB.teachers, id) : type === 'class' ? byId(DB.classes, id) : null;
   let h = `<table class="tt"><tr><th></th>`;
   S.times.forEach((tm, p) => { h += `<th>${p + 1}<small>${tm.s}–${tm.e}</small></th>`; if (S.breaks.includes(p)) h += `<th class="brk"></th>`; });
   h += '</tr>';
@@ -717,18 +774,19 @@ function gridHTML(type, id, interactive) {
     let spanEnd = -1;
     for (let p = 0; p < S.periods; p++) {
       const k = di + '-' + p;
-      if (covered[k]) { if (S.breaks.includes(p) && p === spanEnd) h += `<td class="brk"></td>`; continue; }
+      if (covered[k] && p <= spanEnd) { if (S.breaks.includes(p) && p === spanEnd) h += `<td class="brk"></td>`; continue; }
       const c = at[k];
-      // if a multi-period card spans a break column, colspan must include the break cells
-      let span = 1; if (c) { spanEnd = p + c.len - 1; span = c.len; for (let q = p; q < p + c.len - 1; q++) if (S.breaks.includes(q)) span++; }
-      const off = t && t.off[k];
-      h += `<td ${span > 1 ? `colspan="${span}"` : ''} class="${off ? 'off' : ''}" data-d="${di}" data-p="${p}">`;
+      let span = 1;
+      if (c) { spanEnd = p + c.len - 1; span = c.len; for (let q = p; q < spanEnd; q++) if (S.breaks.includes(q)) span++; }
+      const off = obj && obj.off && obj.off[k];
+      h += `<td ${span > 1 ? `colspan="${span}"` : ''} class="${off && !c ? 'off' : ''}" data-d="${di}" data-p="${p}">`;
       if (c) {
-        const l = byId(DB.lessons, c.lessonId), s = subj(l.subjectId), tc = teach(l.teacherId), r = room(l.roomId);
-        const color = type === 'teacher' ? s.color : (type === 'class' ? s.color : tc.color);
-        const line2 = type === 'class' ? tc.short : type === 'teacher' ? klass(l.classId).name : klass(l.classId).name + ' · ' + tc.short;
+        const l = lessonOf(c.lessonId), s = subj(l.subjectId), r = room(l.roomId);
+        const tc = l.teacherIds[0] ? teach(l.teacherIds[0]) : null;
+        const color = type === 'room' && tc ? tc.color : s.color;
+        const line2 = type === 'class' ? lTeachersShort(l) : type === 'teacher' ? lClassesShort(l) : lClassesShort(l) + ' · ' + lTeachersShort(l);
         const idx = DB.cards.indexOf(c);
-        h += `<div class="cc" ${interactive ? `draggable="true" data-idx="${idx}"` : ''} style="background:${color};color:${contrast(color)}" title="${esc(s.name)} — ${esc(tc.name)}"><b>${esc(s.short)}</b>${esc(line2)}${r && type !== 'room' ? '<br>' + esc(r.name) : ''}${c.locked ? '<span class="lk">🔒</span>' : ''}</div>`;
+        h += `<div class="cc" ${interactive ? `draggable="true" data-idx="${idx}"` : ''} style="background:${color};color:${contrast(color)}" title="${esc(s.name)} — ${esc(lClasses(l))} — ${esc(lTeachers(l))}"><b>${esc(s.short)}</b>${esc(line2)}${r && type !== 'room' ? '<br>' + esc(r.short) : ''}${c.locked && interactive ? '<span class="lk">🔒</span>' : ''}</div>`;
       }
       h += '</td>';
       if (S.breaks.includes(p) && !(c && c.len > 1)) h += `<td class="brk"></td>`;
@@ -737,12 +795,12 @@ function gridHTML(type, id, interactive) {
   });
   return h + '</table>';
 }
-function liveOcc(ctx, ignore) { const occ = emptyOcc(ctx); DB.cards.forEach(c => { if (c !== ignore) occAdd(occ, ctx, c, 1); }); return occ; }
 function canDrop(lessonId, len, d, p, ignore) {
-  const ctx = buildCtx(0); const occ = liveOcc(ctx, ignore);
+  const ctx = buildCtx(0); const occ = emptyOcc();
+  DB.cards.forEach(c => { if (c !== ignore) occAdd(occ, ctx, c, 1); });
   const cf = conflicts(occ, ctx, lessonId, len, d, p);
-  if (!cf) return { ok: false, why: 'Guru tidak hadir / melebihi hari.' };
-  if (cf.length) { const x = cf[0], l = ctx.lmap[x.lessonId]; return { ok: false, why: `Bertindih dengan ${subj(l.subjectId).short} (${klass(l.classId).name}, ${teach(l.teacherId).short}).` }; }
+  if (!cf) return { ok: false, why: 'Slot ini ditanda tidak boleh (masa tidak hadir / di luar hari).' };
+  if (cf.length) { const l = ctx.lmap[cf[0].lessonId]; return { ok: false, why: `Bertindih dengan ${subj(l.subjectId).short} (${lClassesShort(l)}, ${lTeachersShort(l)}).` }; }
   return { ok: true };
 }
 let drag = null;
@@ -770,8 +828,9 @@ function bindGrid() {
   });
 }
 function cardMenu(c) {
-  const l = byId(DB.lessons, c.lessonId), s = subj(l.subjectId);
-  openModal(`<h3>${esc(s.name)}</h3><p class="muted">${esc(klass(l.classId).name)} · ${esc(teach(l.teacherId).name)}${room(l.roomId) ? ' · ' + esc(room(l.roomId).name) : ''}<br>${esc(DB.settings.days[c.day])}, waktu ${c.period + 1}${c.len > 1 ? '–' + (c.period + c.len) : ''}</p>
+  if (!c) return;
+  const l = lessonOf(c.lessonId), s = subj(l.subjectId);
+  openModal(`<h3>${esc(s.name)}</h3><p class="muted">${esc(lClasses(l))} · ${esc(lTeachers(l))}${room(l.roomId) ? ' · ' + esc(room(l.roomId).name) : ''}<br>${esc(DB.settings.days[c.day])}, waktu ${c.period + 1}${c.len > 1 ? '–' + (c.period + c.len) : ''}</p>
     <div class="actions"><button class="btn danger" id="cmDel">Buang dari jadual</button><button class="btn" id="cmLock">${c.locked ? '🔓 Buka kunci' : '🔒 Kunci'}</button><button class="btn" onclick="closeModal()">Tutup</button></div>`);
   $('#cmDel').onclick = () => { DB.cards.splice(DB.cards.indexOf(c), 1); save(); closeModal(); render(); };
   $('#cmLock').onclick = () => { c.locked = !c.locked; save(); closeModal(); render(); };
@@ -787,6 +846,273 @@ function printAll() {
 }
 
 /* =========================================================
+   GOOGLE SHEET / XLSX IMPORT (format eksport aSc TimeTables)
+   ========================================================= */
+const DAY_ABBR = { AHD: 'Ahad', ISN: 'Isnin', SEL: 'Selasa', RAB: 'Rabu', KHA: 'Khamis', JUM: 'Jumaat', SAB: 'Sabtu', SUN: 'Ahad', MON: 'Isnin', TUE: 'Selasa', WED: 'Rabu', THU: 'Khamis', FRI: 'Jumaat', SAT: 'Sabtu' };
+const DAY_FULL = { AHAD: 'Ahad', ISNIN: 'Isnin', SELASA: 'Selasa', RABU: 'Rabu', KHAMIS: 'Khamis', JUMAAT: 'Jumaat', SABTU: 'Sabtu', SUNDAY: 'Ahad', MONDAY: 'Isnin', TUESDAY: 'Selasa', WEDNESDAY: 'Rabu', THURSDAY: 'Khamis', FRIDAY: 'Jumaat', SATURDAY: 'Sabtu' };
+const norm = v => String(v ?? '').replace(/\s+/g, ' ').trim();
+const up = v => norm(v).toUpperCase();
+const dayName = v => DAY_FULL[up(v)] || DAY_ABBR[up(v).slice(0, 3)] || null;
+
+function sheetId(url) { const m = String(url).match(/\/d\/([a-zA-Z0-9-_]{20,})/); return m ? m[1] : (/^[a-zA-Z0-9-_]{20,}$/.test(String(url).trim()) ? String(url).trim() : null); }
+function parseCSV(text) {
+  const rows = []; let row = [], f = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ',') { row.push(f); f = ''; }
+    else if (ch === '\n') { row.push(f); rows.push(row); row = []; f = ''; }
+    else if (ch !== '\r') f += ch;
+  }
+  if (f !== '' || row.length) { row.push(f); rows.push(row); }
+  return rows;
+}
+async function fetchTab(id, name) {
+  const url = `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&headers=0&sheet=${encodeURIComponent(name)}&_=${Date.now()}`;
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const t = await r.text();
+  if (/^\s*<(!doctype|html)/i.test(t)) throw new Error('Sheet tidak dikongsi secara awam');
+  return parseCSV(t);
+}
+// locate header row & column indexes by header names
+function table(rows, required) {
+  if (!rows) return null;
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    const hdr = rows[i].map(up);
+    if (required.every(h => hdr.includes(h.toUpperCase()))) {
+      const idx = {}; hdr.forEach((h, j) => { if (h && idx[h] === undefined) idx[h] = j; });
+      return { idx, rows: rows.slice(i + 1).filter(r => r.some(c => norm(c))), get: (r, h) => idx[h.toUpperCase()] === undefined ? '' : norm(r[idx[h.toUpperCase()]]) };
+    }
+  }
+  return null;
+}
+// "AHD: 1, 11-13; ISN: 11-13; AHD-KHA: 12-13"  -> { "d-p": true }
+function parseTimeOff(str, days, P) {
+  const off = {}; if (!str) return off;
+  String(str).split(';').forEach(seg => {
+    const m = seg.split(':'); if (m.length < 2) return;
+    const dspec = up(m[0]), plist = m.slice(1).join(':');
+    let dIdx = [];
+    const dr = dspec.split('-').map(x => days.indexOf(DAY_ABBR[x.trim().slice(0, 3)] || dayName(x)));
+    if (dr.length === 2 && dr[0] >= 0 && dr[1] >= 0) for (let d = Math.min(dr[0], dr[1]); d <= Math.max(dr[0], dr[1]); d++) dIdx.push(d);
+    else if (dr[0] >= 0) dIdx = [dr[0]];
+    const ps = [];
+    plist.split(',').forEach(x => { const r = x.trim().split('-').map(n => parseInt(n)); if (isNaN(r[0])) return; const b = isNaN(r[1]) ? r[0] : r[1]; for (let p = r[0]; p <= b; p++) ps.push(p - 1); });
+    dIdx.forEach(d => ps.forEach(p => { if (p >= 0 && p < P) off[d + '-' + p] = true; }));
+  });
+  return off;
+}
+// subject placement tab: rows of [.., DAY, PERIOD, class, class, ...]
+function parseSubjectTab(rows) {
+  if (!rows) return null;
+  const out = []; let hasDayHdr = false;
+  rows.forEach(r => {
+    const cells = r.map(norm);
+    if (cells.map(c => c.toUpperCase()).includes('DAY') && cells.map(c => c.toUpperCase()).includes('LESSON')) hasDayHdr = true;
+    let di = cells.findIndex(c => dayName(c));
+    if (di < 0 || di > 2) return;
+    const per = parseInt(cells[di + 1]); if (isNaN(per)) return;
+    const classes = new Set();
+    cells.slice(di + 2).forEach(c => c.split(',').map(norm).filter(Boolean).forEach(x => classes.add(x)));
+    out.push({ day: dayName(cells[di]), period: per, classes: [...classes], dayCol: di });
+  });
+  if (!out.length) return null;
+  // aSc subject tabs have an empty first column (day in column B); the "Available teachers" tab has day in column A
+  if (!hasDayHdr && out.every(x => x.dayCol === 0)) return null;
+  return out;
+}
+const DEFAULT_EXTRA_TABS = ['GALAKAN MEMBACA DAN LITE1069', 'PENGURUSAN DAN PENTADBIR1587', 'PENDIDIKAN JASMANI DAN K2942'];
+
+function buildFromTabs(tabs, log) {
+  const T = name => { const k = Object.keys(tabs).find(x => up(x) === up(name)); return k ? tabs[k] : null; };
+  const tSub = table(T('Subjects'), ['Subject', 'Short']);
+  const tCls = table(T('Classes'), ['Class', 'Short']);
+  const tRoom = table(T('Classrooms'), ['Name', 'Short']);
+  const tTch = table(T('Teachers'), ['Name', 'Short']);
+  const tLes = table(T('Lessons'), ['Teacher', 'Class', 'Subject', 'Lessons/week']);
+  if (!tLes) throw new Error('Tab "Lessons" tidak dijumpai atau formatnya berbeza.');
+  if (!tSub) throw new Error('Tab "Subjects" tidak dijumpai.');
+
+  // Placements first: determine days & periods
+  const placements = {}; // subject full-name upper -> list
+  Object.keys(tabs).forEach(name => {
+    const pl = parseSubjectTab(tabs[name]);
+    if (pl) placements[up(name).replace(/\.$/, '')] = pl;
+  });
+  const daySet = new Set(); let maxP = 0;
+  Object.values(placements).forEach(pl => pl.forEach(x => { daySet.add(x.day); maxP = Math.max(maxP, x.period); }));
+  const avail = T('Available teachers 2') || T('Available teachers');
+  if (avail) avail.forEach(r => { const d = dayName(r[0]); const p = parseInt(r[1]); if (d && !isNaN(p)) { daySet.add(d); maxP = Math.max(maxP, p); } });
+  const old = DB.settings;
+  const days = daySet.size ? ALL_DAYS.filter(d => daySet.has(d)) : old.days.slice();
+  const P = maxP || old.periods;
+
+  const d = blank();
+  Object.assign(d.settings, { school: old.school, year: old.year, sheetUrl: old.sheetUrl, autoSync: old.autoSync, extraTabs: old.extraTabs, days, periods: P,
+    times: old.periods === P && old.times.length === P ? old.times : defaultTimes(P), breaks: old.periods === P ? old.breaks : [] });
+
+  // keep previous colours when re-syncing
+  const oldColor = {}; [...DB.subjects, ...DB.teachers].forEach(x => oldColor[up(x.name)] = x.color);
+
+  tSub.rows.forEach((r, i) => { const name = tSub.get(r, 'Subject'); if (!name) return; d.subjects.push({ id: uid(), name, short: tSub.get(r, 'Short') || name, color: oldColor[up(name)] || PALETTE[i % PALETTE.length], off: parseTimeOff(tSub.get(r, 'Time off'), days, P) }); });
+  if (tCls) tCls.rows.forEach(r => { const name = tCls.get(r, 'Class'); if (!name) return; d.classes.push({ id: uid(), name, short: tCls.get(r, 'Short') || name, off: parseTimeOff(tCls.get(r, 'Time off'), days, P) }); });
+  if (tRoom) tRoom.rows.forEach(r => { const name = tRoom.get(r, 'Name'); if (!name) return; d.rooms.push({ id: uid(), name, short: tRoom.get(r, 'Short') || name }); });
+  if (tTch) tTch.rows.forEach((r, i) => { const name = tTch.get(r, 'Name'); if (!name) return; d.teachers.push({ id: uid(), name, short: tTch.get(r, 'Short') || name, color: oldColor[up(name)] || PALETTE[i % PALETTE.length], off: parseTimeOff(tTch.get(r, 'Time off'), days, P), maxDay: 0 }); });
+
+  const findBy = (arr, v) => { const u = up(v); return arr.find(x => up(x.name) === u) || arr.find(x => up(x.short) === u); };
+  const getClass = v => { let c = findBy(d.classes, v); if (!c) { c = { id: uid(), name: norm(v), short: norm(v), off: {} }; d.classes.push(c); } return c; };
+  const getTeacher = v => { let t = findBy(d.teachers, v); if (!t) { t = { id: uid(), name: norm(v), short: norm(v).split(' ')[0], color: PALETTE[d.teachers.length % PALETTE.length], off: {}, maxDay: 0 }; d.teachers.push(t); } return t; };
+  const getSubject = v => { let s = findBy(d.subjects, v); if (!s) { s = { id: uid(), name: norm(v), short: norm(v), color: PALETTE[d.subjects.length % PALETTE.length], off: {} }; d.subjects.push(s); } return s; };
+  const LEN = { SINGLE: 1, DOUBLE: 2, TRIPLE: 3, QUADRUPLE: 4 };
+
+  tLes.rows.forEach(r => {
+    const subjName = tLes.get(r, 'Subject'); const clsStr = tLes.get(r, 'Class'); if (!subjName || !clsStr) return;
+    const count = parseInt(tLes.get(r, 'Lessons/week')) || 0; if (!count) return;
+    const lenRaw = up(tLes.get(r, 'Length')); const len = LEN[lenRaw] || parseInt(lenRaw) || 1;
+    const teacherStr = tLes.get(r, 'Teacher');
+    const teacherIds = /^WITHOUT TEACHER$|^TANPA GURU$/i.test(teacherStr) || !teacherStr ? [] : [...new Set(teacherStr.split(',').map(norm).filter(Boolean).map(t => getTeacher(t).id))];
+    const classIds = [...new Set(clsStr.split(',').map(norm).filter(Boolean).map(c => getClass(c).id))];
+    const roomsStr = tLes.get(r, 'Available classrooms').split(',').map(norm).filter(Boolean);
+    let roomId = '';
+    if (roomsStr.length === 1 && !/HOME CLASSROOM/i.test(roomsStr[0])) { const rm = findBy(d.rooms, roomsStr[0]); if (rm) roomId = rm.id; }
+    d.lessons.push({ id: uid(), classIds, teacherIds, subjectId: getSubject(subjName).id, roomId, perWeek: count * len, len, _sessions: count });
+  });
+
+  // Build cards from placements
+  let placedCount = 0, unmatched = 0; const usedSlots = new Set(); // classId|day|period
+  const subjByTab = tab => d.subjects.find(s => up(s.name) === tab) || d.subjects.find(s => up(s.short) === tab) || d.subjects.find(s => tab.length >= 20 && up(s.name).startsWith(tab.replace(/\d+$/, '')));
+  const remaining = {}; d.lessons.forEach(l => remaining[l.id] = l._sessions);
+  Object.entries(placements).forEach(([tab, pl]) => {
+    const s = subjByTab(tab); if (!s) return;
+    const lessons = d.lessons.filter(l => l.subjectId === s.id);
+    if (!lessons.length) return;
+    // map classId -> set of "day|period"
+    const slots = {};
+    pl.forEach(x => { const di = days.indexOf(x.day); if (di < 0) return; x.classes.forEach(cn => { const c = findBy(d.classes, cn); if (!c) { unmatched++; return; } (slots[c.id] = slots[c.id] || new Set()).add(di + '|' + (x.period - 1)); }); });
+    // multi-class lessons first, then single-class
+    const ordered = lessons.slice().sort((a, b) => b.classIds.length - a.classIds.length || b.len - a.len);
+    ordered.forEach(l => {
+      const first = l.classIds[0];
+      for (let di = 0; di < days.length && remaining[l.id] > 0; di++) {
+        let p = 0;
+        while (p < P && remaining[l.id] > 0) {
+          const free = q => l.classIds.every(c => slots[c] && slots[c].has(di + '|' + q) && !usedSlots.has(c + '|' + di + '|' + q));
+          if (!free(p)) { p++; continue; }
+          let run = 1; while (p + run < P && run < l.len && free(p + run)) run++;
+          // only accept a run shorter than len if it is a genuine (isolated) leftover
+          if (run < l.len && l.len > 1) {
+            const altSingle = ordered.find(o => o !== l && remaining[o.id] > 0 && o.len <= run && o.classIds.length === l.classIds.length && o.classIds.every(c => l.classIds.includes(c)));
+            if (altSingle) { p += run; continue; }
+          }
+          for (let q = p; q < p + run; q++) l.classIds.forEach(c => usedSlots.add(c + '|' + di + '|' + q));
+          d.cards.push({ lessonId: l.id, day: di, period: p, len: run, locked: true });
+          remaining[l.id]--; placedCount += run; p += run;
+        }
+      }
+    });
+    // second pass for leftovers that were skipped (shorter runs)
+    ordered.forEach(l => {
+      for (let di = 0; di < days.length && remaining[l.id] > 0; di++) for (let p = 0; p < P && remaining[l.id] > 0; p++) {
+        if (!l.classIds.every(c => slots[c] && slots[c].has(di + '|' + p) && !usedSlots.has(c + '|' + di + '|' + p))) continue;
+        let run = 1; while (p + run < P && run < l.len && l.classIds.every(c => slots[c].has(di + '|' + (p + run)) && !usedSlots.has(c + '|' + di + '|' + (p + run)))) run++;
+        for (let q = p; q < p + run; q++) l.classIds.forEach(c => usedSlots.add(c + '|' + di + '|' + q));
+        d.cards.push({ lessonId: l.id, day: di, period: p, len: run, locked: true }); remaining[l.id]--; placedCount += run; p += run - 1;
+      }
+    });
+  });
+  d.lessons.forEach(l => delete l._sessions);
+  // Fix perWeek so lessons whose placements used shorter runs still sum correctly
+  d.lessons.forEach(l => { const pl = d.cards.filter(c => c.lessonId === l.id).reduce((a, c) => a + c.len, 0); if (pl > l.perWeek) l.perWeek = pl; });
+  const totalPeriods = sumPeriods(d.lessons);
+  log(`✔ ${d.subjects.length} subjek · ${d.classes.length} kelas · ${d.teachers.length} guru · ${d.rooms.length} bilik · ${d.lessons.length} pelajaran`);
+  log(`✔ ${Object.keys(placements).length} tab jadual subjek dibaca · ${placedCount}/${totalPeriods} waktu disusun dari sheet${unmatched ? ` · ${unmatched} kelas tidak dikenali` : ''}`);
+  return { d, placedCount, totalPeriods };
+}
+function applyImport(res, log) {
+  DB = res.d; normalize(); save();
+  if (res.placedCount < res.totalPeriods) log(`⚠ ${res.totalPeriods - res.placedCount} waktu belum disusun — tekan "Semak & Jana" untuk lengkapkan secara automatik.`);
+  toast('Jadual sekolah siap dimuatkan!');
+}
+let syncing = false;
+async function syncSheet(manual) {
+  if (syncing) return;
+  const S = DB.settings;
+  if (manual) {
+    S.sheetUrl = $('#g_url').value.trim(); S.autoSync = $('#g_auto').checked; S.extraTabs = $('#g_extra').value; save();
+  }
+  const id = sheetId(S.sheetUrl);
+  const logEl = manual ? $('#g_log') : null, bar = manual ? $('#g_bar') : null;
+  const lines = []; const log = m => { lines.push(m); if (logEl) logEl.innerHTML = lines.map(esc).join('<br>'); };
+  if (!id) { if (manual) toast('Pautan Google Sheet tidak sah.'); return; }
+  syncing = true; const btn = manual ? $('#g_btn') : null; if (btn) { btn.disabled = true; btn.textContent = '⏳ Memuatkan...'; }
+  try {
+    const tabs = {};
+    const base = ['Subjects', 'Classes', 'Classrooms', 'Teachers', 'Lessons'];
+    let done = 0;
+    for (const n of base) {
+      try { tabs[n] = await fetchTab(id, n); log('• ' + n); } catch (e) { log('✖ ' + n + ': ' + e.message); if (n === 'Lessons' || n === 'Subjects') throw e; }
+      if (bar) bar.style.width = (++done / 30 * 100) + '%';
+    }
+    // subject tabs: "<SUBJECT NAME>." plus extras
+    const tSub = table(tabs.Subjects, ['Subject', 'Short']);
+    const names = new Set();
+    if (tSub) tSub.rows.forEach(r => { const n = tSub.get(r, 'Subject'); if (n) names.add(n + '.'); });
+    DEFAULT_EXTRA_TABS.forEach(n => names.add(n));
+    String(S.extraTabs || '').split('\n').map(norm).filter(Boolean).forEach(n => names.add(n));
+    const list = [...names]; const sigs = new Set();
+    const total = base.length + list.length; let got = 0;
+    for (let i = 0; i < list.length; i += 6) {
+      await Promise.all(list.slice(i, i + 6).map(async n => {
+        try {
+          const rows = await fetchTab(id, n);
+          const sig = JSON.stringify(rows).length + ':' + JSON.stringify(rows.slice(0, 20));
+          // gviz returns the first tab when a tab name doesn't exist -> parseSubjectTab rejects it
+          if (parseSubjectTab(rows) && !sigs.has(sig)) { sigs.add(sig); tabs[n] = rows; got++; }
+        } catch (e) { /* tab missing */ }
+        done++; if (bar) bar.style.width = Math.min(100, done / total * 100) + '%';
+      }));
+    }
+    log(`• ${got} tab jadual subjek dijumpai`);
+    const res = buildFromTabs(tabs, log);
+    res.d.settings.sheetUrl = S.sheetUrl; res.d.settings.autoSync = S.autoSync; res.d.settings.extraTabs = S.extraTabs;
+    applyImport(res, log);
+    if (bar) bar.style.width = '100%';
+    if (manual) setTimeout(() => go('view'), 900); else go(current === 'home' ? 'view' : current);
+  } catch (e) {
+    log('✖ Gagal: ' + e.message + '. Pastikan sheet dikongsi "Sesiapa yang mempunyai pautan" dan ada internet.');
+    if (!manual) toast('Segerak Google Sheet gagal — memaparkan data tersimpan.');
+  } finally {
+    syncing = false; if (btn) { btn.disabled = false; btn.textContent = '⚡ Muat & bina jadual'; }
+  }
+}
+function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Gagal memuatkan pembaca Excel (perlu internet kali pertama).')); document.head.appendChild(s); }); }
+async function importXlsxFile(file) {
+  const logEl = $('#x_log'); const lines = []; const log = m => { lines.push(m); if (logEl) logEl.innerHTML = lines.map(esc).join('<br>'); };
+  try {
+    log('⏳ Membaca fail ' + file.name + ' ...');
+    if (!window.XLSX) await loadScript('https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js');
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', dense: true });
+    const tabs = {};
+    wb.SheetNames.forEach(n => {
+      const ws = wb.Sheets[n];
+      // dimension in aSc exports is inflated (A1:IQ10000) — read raw then trim
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '', blankrows: false });
+      tabs[n] = rows.map(r => { const a = r.map(c => String(c ?? '')); while (a.length && !a[a.length - 1].trim()) a.pop(); return a; }).filter(r => r.length);
+    });
+    log('• ' + wb.SheetNames.length + ' tab dibaca');
+    const res = buildFromTabs(tabs, log);
+    res.d.settings.sheetUrl = DB.settings.sheetUrl; res.d.settings.autoSync = DB.settings.autoSync; res.d.settings.extraTabs = DB.settings.extraTabs;
+    applyImport(res, log);
+    setTimeout(() => go('view'), 900);
+  } catch (e) { log('✖ ' + e.message); }
+}
+function appLink() { const id = sheetId(DB.settings.sheetUrl); return location.origin + location.pathname + (id ? '?sheet=' + id : ''); }
+function shareLink() { const l = appLink(); (navigator.clipboard ? navigator.clipboard.writeText(l) : Promise.reject()).then(() => toast('Pautan disalin: guru boleh buka terus jadual.'), () => prompt('Salin pautan ini:', l)); }
+
+/* =========================================================
    FILES
    ========================================================= */
 function download(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); }
@@ -794,8 +1120,8 @@ function exportJSON() { download(`digital-timetable-${(DB.settings.school || 'se
 function exportCSV() {
   const S = DB.settings; const rows = [['Hari', 'Waktu', 'Masa', 'Kelas', 'Subjek', 'Guru', 'Bilik']];
   DB.cards.slice().sort((a, b) => a.day - b.day || a.period - b.period).forEach(c => {
-    const l = byId(DB.lessons, c.lessonId);
-    for (let k = 0; k < c.len; k++) rows.push([S.days[c.day], c.period + k + 1, `${S.times[c.period + k].s}-${S.times[c.period + k].e}`, klass(l.classId).name, subj(l.subjectId).name, teach(l.teacherId).name, room(l.roomId)?.name || '']);
+    const l = lessonOf(c.lessonId); if (!l) return;
+    for (let k = 0; k < c.len; k++) { const t = S.times[c.period + k] || { s: '', e: '' }; rows.push([S.days[c.day], c.period + k + 1, `${t.s}-${t.e}`, lClasses(l), subj(l.subjectId).name, lTeachers(l), room(l.roomId)?.name || '']); }
   });
   download('jadual-waktu.csv', '\ufeff' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n'), 'text/csv');
 }
@@ -809,7 +1135,7 @@ function loadDemo() { if (DB.lessons.length && !confirm('Ganti data semasa denga
 function newFile() { if (!confirm('Padam semua data dan mula fail baharu?')) return; DB = blank(); save(); render(); }
 
 /* =========================================================
-   PWA
+   PWA + STARTUP
    ========================================================= */
 let deferredPrompt = null;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; const b = $('#installBtn'); if (b) b.style.display = ''; });
@@ -818,7 +1144,15 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
 
-go('home');
+(function start() {
+  const qp = new URLSearchParams(location.search).get('sheet');
+  if (qp && sheetId(qp)) {
+    if (sheetId(DB.settings.sheetUrl) !== qp) { DB.settings.sheetUrl = 'https://docs.google.com/spreadsheets/d/' + qp + '/edit'; DB.settings.autoSync = true; save(); }
+  }
+  go(DB.cards.length ? 'view' : 'home');
+  if (DB.settings.sheetUrl && DB.settings.autoSync && navigator.onLine) syncSheet(false);
+})();
 </script>
+
 </body>
 </html>
