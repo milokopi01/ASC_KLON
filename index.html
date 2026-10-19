@@ -70,6 +70,10 @@ table.tt th{font-size:11px;color:var(--muted);font-weight:700;padding:4px}
 table.tt th.day{text-align:left;font-family:Sora;font-size:13px;color:var(--text);width:90px}
 table.tt th small{display:block;font-weight:400}
 table.tt td{height:62px;background:var(--panel2);border-radius:10px;padding:0;position:relative;vertical-align:top}
+table.tt .slot-toggle{display:block;width:100%;height:62px;background:transparent;border:0;border-radius:10px;cursor:pointer;color:var(--muted);font-size:18px}
+table.tt .slot-toggle:hover{outline:2px solid var(--cyan);color:var(--text)}
+table.tt .slot-toggle:focus-visible{outline:2px solid var(--cyan)}
+@media print{table.tt .slot-toggle{display:none}}
 table.tt td.off{background:repeating-linear-gradient(45deg,#2a1620,#2a1620 6px,#1d1220 6px,#1d1220 12px)}
 table.tt td.drop-ok{outline:2px dashed var(--green)}
 table.tt td.drop-bad{outline:2px dashed var(--red)}
@@ -178,7 +182,7 @@ function defaultTimes(n, start = '07:30', dur = 30) {
 }
 function blank() {
   return {
-    settings: { school: '', year: String(new Date().getFullYear()), days: ['Isnin','Selasa','Rabu','Khamis','Jumaat'], periods: 10, times: defaultTimes(10), breaks: [], sheetUrl: DEFAULT_API, autoSync: true, extraTabs: '' },
+    settings: { school: '', year: String(new Date().getFullYear()), days: ['Isnin','Selasa','Rabu','Khamis','Jumaat'], periods: 10, times: defaultTimes(10), breaks: [], sheetUrl: DEFAULT_API, autoSync: true, extraTabs: '', blockOverrides: [] },
     subjects: [], classes: [], rooms: [], teachers: [], lessons: [], cards: []
   };
 }
@@ -255,6 +259,7 @@ function contrast(hex) { const h = String(hex).replace('#', ''); if (h.length < 
 let current = 'home';
 const viewState = { type: 'class', id: '', lf: '' };
 function go(v) {
+  if (generating) { toast('Tekan Berhenti sebelum meninggalkan penjana.'); return; }
   current = v;
   document.querySelectorAll('.nav').forEach(b => b.classList.toggle('on', b.dataset.v === v));
   $('#side').classList.remove('open');
@@ -396,6 +401,8 @@ const VIEWS = {
       </div>
       <div class="row" style="margin-top:14px">
         <button class="btn pri big" id="genBtn" onclick="runGenerate()">⚡ Jana Jadual</button>
+        <button class="btn pri big" id="genUntilBtn" onclick="runGenerate(true)">⚡ Jana sehingga siap</button>
+        <button class="btn danger big" id="genStopBtn" onclick="stopGenerate()" disabled>⏹ Berhenti</button>
         <button class="btn" onclick="clearCards(false)">Kosongkan (kekal kunci)</button>
         <button class="btn danger" onclick="clearCards(true)">Kosongkan semua</button>
       </div>
@@ -668,14 +675,21 @@ function score(occ, ctx, lessonId, len, d, p) {
   l.classIds.forEach(c => { const cc = occ.cls[c] || {}; if (p > 0 && !cc[key3(d, p - 1)]) sc += 0.5; });
   return sc;
 }
-function attempt(ctx, lockedCards, units) {
+async function attempt(ctx, lockedCards, units, shouldStop = () => false) {
   const occ = emptyOcc(); const placed = [];
   lockedCards.forEach(c => { occAdd(occ, ctx, c, 1); placed.push(c); });
   const queue = units.map(u => ({ ...u, r: Math.random() })).sort((a, b) => (b.diff + b.r * 2) - (a.diff + a.r * 2));
   const unplaced = []; let budget = units.length * 25;
   const all = [];
   for (let d = 0; d < ctx.D; d++) for (let p = 0; p < ctx.P; p++) all.push([d, p]);
+  let lastYield = performance.now();
   while (queue.length) {
+    if (shouldStop()) { unplaced.push(...queue); break; }
+    if (performance.now() - lastYield >= 25) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      lastYield = performance.now();
+      if (shouldStop()) { unplaced.push(...queue); break; }
+    }
     const u = queue.shift();
     let best = null, bestSc = Infinity;
     for (const [d, p] of all) {
@@ -708,7 +722,14 @@ function attempt(ctx, lockedCards, units) {
   return { placed, missing: unplaced.reduce((a, u) => a + u.len, 0) };
 }
 let generating = false;
-function runGenerate() {
+let generationStopRequested = false;
+function stopGenerate() {
+  if (!generating) return;
+  generationStopRequested = true;
+  const btn = $('#genStopBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Menghentikan...'; }
+}
+async function runGenerate(untilComplete = false) {
   if (generating) return;
   const _errs = checkData().filter(i => i.lvl === 'err');
   if (_errs.length && !confirm('Terdapat ' + _errs.length + ' ralat data (lihat senarai merah di atas). Sebahagian waktu mungkin tidak dapat disusun. Teruskan jana?')) return;
@@ -726,29 +747,52 @@ function runGenerate() {
   });
   const total = units.reduce((a, u) => a + u.len, 0);
   const bar = $('#gbar'), msg = $('#gmsg'), btn = $('#genBtn');
-  if (!total) { msg.innerHTML = '<span style="color:var(--green)">✔ Semua waktu telah disusun.</span>'; return; }
-  generating = true; btn.disabled = true; btn.textContent = '⏳ Menjana...';
-  const t0 = performance.now(); let best = null, tries = 0;
-  const step = () => {
-    try {
-      const sliceEnd = performance.now() + 120;
-      do { const r = attempt(ctx, locked, units); tries++; if (!best || r.missing < best.missing) best = r; } while (best.missing > 0 && performance.now() < sliceEnd);
-    } catch (e) { generating = false; btn.disabled = false; btn.textContent = '⚡ Jana Jadual'; msg.textContent = 'Ralat: ' + e.message; return; }
-    const el = (performance.now() - t0) / 1000;
-    bar.style.width = Math.min(100, best.missing === 0 ? 100 : el / secs * 100) + '%';
-    msg.textContent = `Cubaan ${tries} · terbaik: ${total - best.missing}/${total} waktu disusun`;
-    if (best.missing === 0 || el >= secs) {
-      DB.cards = best.placed; save(); generating = false;
-      btn.disabled = false; btn.textContent = '⚡ Jana Jadual';
-      if (best.missing === 0) { msg.innerHTML = `<span style="color:var(--green)">✔ Berjaya! Semua ${total} waktu disusun dalam ${el.toFixed(1)} saat.</span>`; toast('Jadual berjaya dijana!'); setTimeout(() => go('view'), 700); }
-      else msg.innerHTML = `<span style="color:var(--amber)">⚠ ${best.missing} waktu tidak dapat disusun. Cuba tambah masa, kurangkan kekangan, atau susun secara manual di halaman Jadual Waktu.</span>`;
-      return;
+  if (!total) { msg.textContent = '✔ Semua waktu telah disusun.'; return; }
+  const untilBtn = $('#genUntilBtn'), stopBtn = $('#genStopBtn');
+  generating = true; generationStopRequested = false;
+  btn.disabled = true; untilBtn.disabled = true; stopBtn.disabled = false;
+  $('#g_time').disabled = true; $('#g_consec').disabled = true;
+  const t0 = performance.now(); let tries = 0;
+  const occ = emptyOcc(); locked.forEach(c => occAdd(occ, ctx, c, 1));
+  const baseline = [...locked];
+  DB.cards.filter(c => !c.locked).forEach(c => {
+    const cf = conflicts(occ, ctx, c.lessonId, c.len, c.day, c.period);
+    if (cf && !cf.length && remainingParts(ctx.lmap[c.lessonId], baseline).includes(c.len)) {
+      baseline.push(c); occAdd(occ, ctx, c, 1);
     }
-    setTimeout(step, 0);
+  });
+  const missingOf = cards => DB.lessons.reduce((n, l) => n + remainingParts(l, cards).reduce((a, len) => a + len, 0), 0);
+  let best = { placed: baseline, missing: missingOf(baseline) };
+  const elapsed = () => (performance.now() - t0) / 1000;
+  const shouldStop = () => generationStopRequested || (!untilComplete && elapsed() >= secs);
+  const showProgress = () => {
+    bar.style.width = (total ? (total - best.missing) / total * 100 : 100) + '%';
+    msg.textContent = `Cubaan ${tries} · terbaik: ${total - best.missing}/${total} waktu · ${elapsed().toFixed(1)} saat${untilComplete ? ' · Tanpa had masa' : ''}`;
   };
-  setTimeout(step, 30);
+  let error = null;
+  showProgress();
+  try {
+    while (best.missing > 0 && !shouldStop()) {
+      const r = await attempt(ctx, locked, units, shouldStop); tries++;
+      if (r.missing < best.missing) { best = r; DB.cards = best.placed; save(); }
+      showProgress();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  } catch (e) { error = e; }
+  DB.cards = best.placed; save(); generating = false;
+  btn.disabled = false; untilBtn.disabled = false; stopBtn.disabled = true; stopBtn.textContent = '⏹ Berhenti';
+  $('#g_time').disabled = false; $('#g_consec').disabled = false;
+  if (error) msg.textContent = 'Ralat: ' + error.message + '. Hasil terbaik disimpan.';
+  else if (best.missing === 0) {
+    msg.textContent = `✔ Berjaya! Semua waktu disusun dalam ${elapsed().toFixed(1)} saat.`;
+    toast('Jadual berjaya dijana!');
+  } else {
+    msg.textContent = `${generationStopRequested ? '⏹ Dihentikan' : '⚠ Masa cubaan tamat'} · hasil terbaik disimpan · ${best.missing} waktu belum disusun.`;
+  }
 }
+
 function clearCards(all) {
+  if (generating) return toast('Tekan Berhenti sebelum mengosongkan jadual.');
   if (!confirm(all ? 'Kosongkan semua slot termasuk yang dikunci?' : 'Kosongkan semua slot yang tidak dikunci?')) return;
   DB.cards = all ? [] : DB.cards.filter(c => c.locked); save(); render(); toast('Jadual dikosongkan.');
 }
@@ -791,12 +835,48 @@ function gridHTML(type, id, interactive) {
         const idx = DB.cards.indexOf(c);
         h += `<div class="cc" ${interactive ? `draggable="true" data-idx="${idx}"` : ''} style="background:${color};color:${contrast(color)}" title="${esc(s.name)} — ${esc(lClasses(l))} — ${esc(lTeachers(l))}"><b>${esc(s.short)}</b>${esc(line2)}${r && type !== 'room' ? '<br>' + esc(r.short) : ''}${c.locked && interactive ? '<span class="lk">🔒</span>' : ''}</div>`;
       }
+      if (!c && obj && interactive) h += `<button class="slot-toggle" type="button" data-slot-toggle aria-label="${off ? 'Buka blok' : 'Blok'} ${esc(d)}, waktu ${p + 1}" title="${off ? 'Buka blok' : 'Blok'}">${off ? '🔓' : ''}</button>`;
       h += '</td>';
       if (S.breaks.includes(p) && !(c && c.len > 1)) h += `<td class="brk"></td>`;
     }
     h += '</tr>';
   });
   return h + '</table>';
+}
+function toggleSlotBlock(type, id, d, p) {
+  const kind = type === 'class' ? 'classes' : type === 'teacher' ? 'teachers' : '';
+  const obj = kind ? byId(DB[kind], id) : null;
+  if (!obj || d < 0 || d >= DB.settings.days.length || p < 0 || p >= DB.settings.periods) return;
+  if (cardsFor(type, id).some(c => c.day === d && p >= c.period && p < c.period + c.len)) return;
+  obj.off = obj.off || {};
+  const key = d + '-' + p;
+  const blocked = !obj.off[key];
+  if (blocked) obj.off[key] = true; else delete obj.off[key];
+  const day = DB.settings.days[d];
+  const overrides = Array.isArray(DB.settings.blockOverrides) ? DB.settings.blockOverrides : [];
+  DB.settings.blockOverrides = overrides.filter(x => !(x.kind === kind && x.name === obj.name && x.day === day && x.period === p));
+  DB.settings.blockOverrides.push({ kind, name: obj.name, day, period: p, blocked });
+  save(); render(); toast(blocked ? 'Slot diblok.' : 'Blok dibuka. Slot boleh digunakan semula.');
+}
+function restoreSlotBlocks(data, overrides) {
+  if (!Array.isArray(overrides)) return;
+  data.settings.blockOverrides = overrides;
+  overrides.forEach(x => {
+    if (!['classes', 'teachers'].includes(x.kind)) return;
+    const obj = data[x.kind].find(o => o.name === x.name);
+    const day = data.settings.days.indexOf(x.day);
+    if (!obj || day < 0 || x.period < 0 || x.period >= data.settings.periods) return;
+    obj.off = obj.off || {};
+    const key = day + '-' + x.period;
+    if (x.blocked) {
+      obj.off[key] = true;
+      const type = x.kind === 'classes' ? 'class' : 'teacher';
+      data.cards = data.cards.filter(c => {
+        const l = data.lessons.find(l => l.id === c.lessonId);
+        return !(l && lessonMatch(l, type, obj.id) && c.day === day && x.period >= c.period && x.period < c.period + c.len);
+      });
+    } else delete obj.off[key];
+  });
 }
 function canDrop(lessonId, len, d, p, ignore) {
   const ctx = buildCtx(0); const occ = emptyOcc();
@@ -808,6 +888,10 @@ function canDrop(lessonId, len, d, p, ignore) {
 }
 let drag = null;
 function bindGrid() {
+  document.querySelectorAll('[data-slot-toggle]').forEach(el => el.addEventListener('click', () => {
+    const td = el.closest('td');
+    if (td) toggleSlotBlock(viewState.type, viewState.id, +td.dataset.d, +td.dataset.p);
+  }));
   document.querySelectorAll('.cc[data-idx], .chip[data-new]').forEach(el => {
     el.addEventListener('dragstart', e => {
       if (el.dataset.idx !== undefined) { const c = DB.cards[+el.dataset.idx]; drag = { card: c, lessonId: c.lessonId, len: c.len }; }
@@ -1034,6 +1118,8 @@ function buildFromTabs(tabs, log) {
   return { d, placedCount, totalPeriods };
 }
 function applyImport(res, log) {
+  if (generating) throw new Error('Hentikan penjana sebelum memuatkan data baharu.');
+  restoreSlotBlocks(res.d, DB.settings.blockOverrides);
   DB = res.d; normalize(); save();
   if (res.placedCount < res.totalPeriods) log(`⚠ ${res.totalPeriods - res.placedCount} waktu belum disusun — tekan "Semak & Jana" untuk lengkapkan secara automatik.`);
   toast('Jadual sekolah siap dimuatkan!');
