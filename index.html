@@ -395,7 +395,7 @@ const VIEWS = {
         <div><label>Maks waktu berturut-turut guru (0 = tiada had)</label><input id="g_consec" type="number" min="0" max="20" value="0"></div>
       </div>
       <div class="row" style="margin-top:14px">
-        <button class="btn pri big" id="genBtn" ${errs.length ? 'disabled style="opacity:.5"' : ''} onclick="runGenerate()">⚡ Jana Jadual</button>
+        <button class="btn pri big" id="genBtn" onclick="runGenerate()">⚡ Jana Jadual</button>
         <button class="btn" onclick="clearCards(false)">Kosongkan (kekal kunci)</button>
         <button class="btn danger" onclick="clearCards(true)">Kosongkan semua</button>
       </div>
@@ -710,6 +710,8 @@ function attempt(ctx, lockedCards, units) {
 let generating = false;
 function runGenerate() {
   if (generating) return;
+  const _errs = checkData().filter(i => i.lvl === 'err');
+  if (_errs.length && !confirm('Terdapat ' + _errs.length + ' ralat data (lihat senarai merah di atas). Sebahagian waktu mungkin tidak dapat disusun. Teruskan jana?')) return;
   const secs = Math.max(2, parseInt($('#g_time').value) || 10);
   const consec = Math.max(0, parseInt($('#g_consec').value) || 0);
   const ctx = buildCtx(consec);
