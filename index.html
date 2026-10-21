@@ -105,6 +105,7 @@ table.tt td.brk{width:10px;background:transparent}
 .step b{font-family:Sora}.step p{margin:4px 0 0;font-size:12px;color:var(--muted)}
 .menu-btn{display:none}
 .print-only{display:none}
+.snap .print-only{display:block}.snap .no-print{display:none!important}
 @media (max-width:860px){
   .app{grid-template-columns:1fr}
   aside{position:fixed;left:-260px;width:240px;z-index:40;transition:.25s}
@@ -346,8 +347,8 @@ const VIEWS = {
   subjects() {
     return head('Subjek', 'Mata pelajaran yang diajar pada sesi ini.', `<button class="btn pri" onclick="editSubject()">+ Subjek baharu</button>`) +
     `<div class="card">${DB.subjects.length ? `<table class="list"><tr><th>Nama</th><th>Singkatan</th><th>Waktu/minggu</th><th>Tidak boleh</th><th></th></tr>
-      ${DB.subjects.map(s => `<tr><td><span class="dot" style="background:${s.color}"></span>${esc(s.name)}</td><td>${esc(s.short)}</td><td>${sumPeriods(DB.lessons.filter(l => l.subjectId === s.id))}</td><td>${Object.keys(s.off).length} slot</td>
-      <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="editOff('subjects','${s.id}')">Masa</button> <button class="btn sm" onclick="editSubject('${s.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('subjects','${s.id}')">Padam</button></td></tr>`).join('')}</table>` : '<div class="empty">Belum ada subjek.</div>'}</div>` + nextBtn('classes', 'Seterusnya: Kelas');
+      ${DB.subjects.map(s => `<tr ondblclick="editLesson(null,{subjectId:'${s.id}'})" title="Dwiklik untuk tambah pelajaran subjek ini" style="cursor:pointer"><td><span class="dot" style="background:${s.color}"></span>${esc(s.name)}</td><td>${esc(s.short)}</td><td>${sumPeriods(DB.lessons.filter(l => l.subjectId === s.id))}</td><td>${Object.keys(s.off).length} slot</td>
+      <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="editLesson(null,{subjectId:'${s.id}'})">+ Pelajaran</button> <button class="btn sm" onclick="editOff('subjects','${s.id}')">Masa</button> <button class="btn sm" onclick="editSubject('${s.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('subjects','${s.id}')">Padam</button></td></tr>`).join('')}</table>` : '<div class="empty">Belum ada subjek.</div>'}</div>` + nextBtn('classes', 'Seterusnya: Kelas');
   },
 
   classes() {
@@ -368,10 +369,10 @@ const VIEWS = {
 
   teachers() {
     return head('Guru', 'Tambah guru, pilih warna dan tetapkan masa guru tidak boleh mengajar.', `<button class="btn" onclick="colorAll()">Warnakan semua</button><button class="btn pri" onclick="editTeacher()">+ Guru baharu</button>`) +
-    `<div class="card">${DB.teachers.length ? `<table class="list"><tr><th>Nama</th><th>Singkatan</th><th>Beban</th><th>Maks/hari</th><th>Tidak hadir</th><th></th></tr>
-      ${DB.teachers.map(t => `<tr><td><span class="dot" style="background:${t.color}"></span>${esc(t.name)}</td><td>${esc(t.short)}</td>
-      <td>${sumPeriods(DB.lessons.filter(l => l.teacherIds.includes(t.id)))} waktu</td><td>${t.maxDay || '—'}</td><td>${Object.keys(t.off).length} slot</td>
-      <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="editOff('teachers','${t.id}')">Masa tidak hadir</button> <button class="btn sm" onclick="editTeacher('${t.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('teachers','${t.id}')">Padam</button></td></tr>`).join('')}</table>` : '<div class="empty">Belum ada guru.</div>'}</div>` + nextBtn('lessons', 'Seterusnya: Pelajaran');
+    `<div class="card">${DB.teachers.length ? `<table class="list"><tr><th>Nama</th><th>Singkatan</th><th>Beban</th><th>Guru kelas</th><th>Maks/hari</th><th>Tidak hadir</th><th></th></tr>
+      ${DB.teachers.map(t => `<tr ondblclick="viewState.lf='${t.id}';go('lessons')" title="Dwiklik untuk lihat/tambah pelajaran guru ini" style="cursor:pointer"><td><span class="dot" style="background:${t.color}"></span>${esc(t.name)}</td><td>${esc(t.short)}</td>
+      <td>${sumPeriods(DB.lessons.filter(l => l.teacherIds.includes(t.id)))} waktu</td><td>${t.classId && byId(DB.classes, t.classId) ? esc(klass(t.classId).name) : '—'}</td><td>${t.maxDay || '—'}</td><td>${Object.keys(t.off).length} slot</td>
+      <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="viewState.lf='${t.id}';go('lessons')">Pelajaran</button> <button class="btn sm" onclick="editOff('teachers','${t.id}')">Masa tidak hadir</button> <button class="btn sm" onclick="editTeacher('${t.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('teachers','${t.id}')">Padam</button></td></tr>`).join('')}</table>` : '<div class="empty">Belum ada guru.</div>'}</div>` + nextBtn('lessons', 'Seterusnya: Pelajaran');
   },
 
   lessons() {
@@ -419,7 +420,7 @@ const VIEWS = {
     const unplaced = viewState.type !== 'room' && viewState.id ? unplacedFor(viewState.type, viewState.id) : [];
     const load = viewState.type === 'teacher' ? cardsFor('teacher', viewState.id).reduce((a, c) => a + c.len, 0) : null;
     return head('Jadual Waktu', `${esc(S.school)} · ${esc(S.year)} · ${placed}/${totalUnits} waktu disusun`,
-      `<button class="btn" onclick="window.print()">🖨 Cetak paparan</button><button class="btn" onclick="printAll()">🖨 Cetak semua ${viewState.type === 'class' ? 'kelas' : viewState.type === 'teacher' ? 'guru' : 'bilik'}</button><button class="btn" onclick="exportCSV()">CSV</button>`) +
+      `<button class="btn" onclick="window.print()">🖨 Cetak paparan</button><button class="btn" onclick="printAll()">🖨 Cetak semua ${viewState.type === 'class' ? 'kelas' : viewState.type === 'teacher' ? 'guru' : 'bilik'}</button><button class="btn" onclick="saveImage()">🖼 Simpan JPEG</button><button class="btn" onclick="exportCSV()">CSV</button>`) +
     `<div class="card no-print"><div class="row">
       <div style="display:flex;gap:6px">${[['class','Kelas'],['teacher','Guru'],['room','Bilik']].map(t => `<button class="btn ${viewState.type === t[0] ? 'pri' : ''}" onclick="viewState.type='${t[0]}';viewState.id='';render()">${t[1]}</button>`).join('')}</div>
       <div style="min-width:240px;flex:1;max-width:380px"><select onchange="viewState.id=this.value;render()">${opts(list, viewState.id)}</select></div>
@@ -509,9 +510,10 @@ function editRoom(id) {
 function editTeacher(id) {
   const t = byId(DB.teachers, id) || { name: '', short: '', color: PALETTE[DB.teachers.length % PALETTE.length], maxDay: 0, off: {} };
   modalForm(id ? 'Ubah guru' : 'Guru baharu', `<div class="grid2"><div><label>Nama</label><input id="f_name" required value="${esc(t.name)}"></div><div><label>Singkatan</label><input id="f_short" maxlength="12" value="${esc(t.short)}"></div>
-    <div><label>Maks waktu sehari (0 = tiada had)</label><input id="f_max" type="number" min="0" max="20" value="${t.maxDay}"></div><div><label>Warna</label><input type="color" id="f_color" value="${t.color}"></div></div>`, () => {
+    <div><label>Maks waktu sehari (0 = tiada had)</label><input id="f_max" type="number" min="0" max="20" value="${t.maxDay}"></div><div><label>Warna</label><input type="color" id="f_color" value="${t.color}"></div>
+    <div><label>Guru kelas</label><select id="f_ct">${opts(DB.classes, t.classId || '', x => x.name, '— Tiada —')}</select></div></div>`, () => {
     const name = $('#f_name').value.trim(); if (!name) return false;
-    const o = { name, short: $('#f_short').value.trim() || name.replace(/^(En\.|Pn\.|Cik|Ust\.|Ustazah|Ustaz|Dr\.)\s*/i, '').slice(0, 5).toUpperCase(), color: $('#f_color').value, maxDay: Math.max(0, parseInt($('#f_max').value) || 0) };
+    const o = { name, short: $('#f_short').value.trim() || name.replace(/^(En\.|Pn\.|Cik|Ust\.|Ustazah|Ustaz|Dr\.)\s*/i, '').slice(0, 5).toUpperCase(), color: $('#f_color').value, maxDay: Math.max(0, parseInt($('#f_max').value) || 0), classId: $('#f_ct').value };
     if (id) Object.assign(t, o); else DB.teachers.push({ id: uid(), off: {}, ...o });
   });
 }
@@ -531,17 +533,17 @@ function editOff(kind, id) {
   $('#offClr').onclick = () => { for (const k in off) delete off[k]; redraw(); };
   $('#offSave').onclick = () => { o.off = off; save(); closeModal(); render(); toast('Disimpan.'); };
 }
-function editLesson(id) {
+function editLesson(id, preset) {
   if (!DB.classes.length || !DB.subjects.length) return toast('Tambah kelas dan subjek dahulu.');
-  const l = byId(DB.lessons, id) || { classIds: [viewState.lf && byId(DB.classes, viewState.lf) ? viewState.lf : DB.classes[0].id], subjectId: DB.subjects[0].id, teacherIds: viewState.lf && byId(DB.teachers, viewState.lf) ? [viewState.lf] : (DB.teachers[0] ? [DB.teachers[0].id] : []), roomId: '', perWeek: 2, len: 1 };
+  const l = byId(DB.lessons, id) || { classIds: [viewState.lf && byId(DB.classes, viewState.lf) ? viewState.lf : DB.classes[0].id], subjectId: DB.subjects[0].id, teacherIds: viewState.lf && byId(DB.teachers, viewState.lf) ? [viewState.lf] : (DB.teachers[0] ? [DB.teachers[0].id] : []), roomId: '', perWeek: 2, len: 1, ...(preset || {}) };
   modalForm(id ? 'Ubah pelajaran' : 'Pelajaran baharu', `<div class="grid2">
-    <div><label>Kelas</label><select id="f_class" multiple size="5">${opts(DB.classes, l.classIds)}</select><small class="muted">Ctrl/⌘ untuk pilih lebih dari satu (kelas bergabung)</small></div>
-    <div><label>Guru</label><select id="f_teach" multiple size="5">${opts(DB.teachers, l.teacherIds)}</select><small class="muted">Boleh pilih lebih dari satu (guru bersama)</small></div>
+    <div><label>Kelas</label><select id="f_class" multiple size="5">${opts(DB.classes, l.classIds)}</select><small class="muted">Ctrl/⌘ untuk pilih lebih dari satu (kelas bergabung)</small> <button type="button" class="btn sm" onclick="[...document.querySelectorAll('#f_class option')].forEach(o=>o.selected=true)">Pilih semua kelas</button></div>
+    <div><label>Guru</label><select id="f_teach" multiple size="5">${opts(DB.teachers, l.teacherIds)}</select><small class="muted">Boleh pilih lebih dari satu (guru bersama)</small> <button type="button" class="btn sm" onclick="[...document.querySelectorAll('#f_teach option')].forEach(o=>o.selected=false)">Tanpa guru</button></div>
     <div><label>Subjek</label><select id="f_subj">${opts(DB.subjects, l.subjectId)}</select></div>
     <div><label>Bilik (pilihan)</label><select id="f_room">${opts(DB.rooms, l.roomId, x => x.name, '— Bilik darjah —')}</select></div>
     <div><label>Jumlah waktu seminggu</label><input id="f_pw" type="number" min="1" max="60" value="${l.perWeek}"></div>
     <div><label>Panjang sesi</label><select id="f_len">${[1, 2, 3, 4].map(n => `<option value="${n}" ${l.len === n ? 'selected' : ''}>${n === 1 ? 'Single (1 waktu)' : n === 2 ? 'Berkembar (2 waktu)' : n + ' waktu'}</option>`).join('')}</select></div>
-  </div><p class="muted" style="font-size:12px">Contoh: 5 waktu seminggu dengan sesi berkembar = 2 sesi berkembar + 1 single.</p>`, () => {
+  </div><p class="muted" style="font-size:12px">Kad aktiviti semua kelas (perhimpunan, Yasiin, koko, 1M1S): pilih subjek aktiviti → Tanpa guru → Pilih semua kelas → jumlah waktu → OK.<br>Contoh: 5 waktu seminggu dengan sesi berkembar = 2 sesi berkembar + 1 single.</p>`, () => {
     const classIds = [...$('#f_class').selectedOptions].map(x => x.value);
     if (!classIds.length) { toast('Pilih kelas.'); return false; }
     const o = { classIds, teacherIds: [...$('#f_teach').selectedOptions].map(x => x.value), subjectId: $('#f_subj').value, roomId: $('#f_room').value, perWeek: Math.max(1, parseInt($('#f_pw').value) || 1), len: parseInt($('#f_len').value) || 1 };
@@ -1190,6 +1192,15 @@ async function syncSheet(manual) {
   } finally {
     syncing = false; if (btn) { btn.disabled = false; btn.textContent = '⚡ Muat & bina jadual'; }
   }
+}
+async function saveImage() {
+  const el = $('#printArea'); if (!el) return;
+  try {
+    if (!window.html2canvas) await loadScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js');
+    el.classList.add('snap'); const cv = await html2canvas(el, { backgroundColor: '#ffffff', scale: 2 }); el.classList.remove('snap');
+    const a = document.createElement('a'); a.href = cv.toDataURL('image/jpeg', 0.92);
+    a.download = (nameOf(viewState.type, viewState.id) || 'jadual').replace(/[^\w\- ]+/g, '_') + '.jpg'; a.click(); toast('Gambar JPEG disimpan — sedia dihantar ke WhatsApp.');
+  } catch (e) { toast('Gagal simpan gambar (perlu internet kali pertama).'); }
 }
 function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Gagal memuatkan pembaca Excel (perlu internet kali pertama).')); document.head.appendChild(s); }); }
 async function importXlsxFile(file) {
