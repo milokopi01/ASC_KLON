@@ -710,6 +710,35 @@ function teacherFilterIssues(ctx, cards, checkMinimum = true) {
   }
   return out;
 }
+// Guru-hari yang melanggar penapis (untuk pembaikan setempat).
+function issueTeacherDays(ctx, cards) {
+  const occ = emptyOcc(); cards.forEach(c => occAdd(occ, ctx, c, 1)); const out = new Set();
+  for (const tid of Object.keys(ctx.tMap)) for (let d = 0; d < ctx.D; d++) {
+    const dc = teacherDayCards(occ, ctx, tid, d);
+    if (teacherDayIssue(ctx, tid, dc)) { out.add(tid + ':' + d); continue; }
+    if (ctx.filters.minEnabled && dc.length) { let b = 0; dc.forEach(c => b += c.len); if (b < ctx.filters.minDay) out.add(tid + ':' + d); }
+    else if (ctx.filters.minEnabled && !dc.length && DB.lessons.some(l => l.teacherIds.includes(tid)) && Array.from({ length: ctx.P }, (_, p) => p).some(p => !ctx.tMap[tid].off?.[d + '-' + p])) out.add(tid + ':' + d);
+  }
+  return out;
+}
+// Pembaikan: kekalkan sebahagian besar hasil terbaik, susun semula kad di sekitar masalah sahaja.
+function repairSeed(ctx, best, locked) {
+  const bad = issueTeacherDays(ctx, best.placed); const badT = new Set([...bad].map(x => x.split(':')[0]));
+  const missingL = new Set(DB.lessons.filter(l => remainingParts(l, best.placed).length).map(l => l.id));
+  const hot = new Set(); DB.lessons.forEach(l => { if (missingL.has(l.id)) { l.teacherIds.forEach(t => hot.add('t' + t)); l.classIds.forEach(c => hot.add('c' + c)); } });
+  const rate = 0.15 + Math.random() * 0.2; const dropB = new Set();
+  const keep = best.placed.filter(c => !c.locked).filter(c => {
+    const l = ctx.lmap[c.lessonId]; if (!l) return false;
+    let drop = Math.random() < rate
+      || l.teacherIds.some(t => bad.has(t + ':' + c.day) || (badT.has(t) && Math.random() < 0.35))
+      || ((l.teacherIds.some(t => hot.has('t' + t)) || l.classIds.some(x => hot.has('c' + x))) && Math.random() < 0.5);
+    if (drop && c.bundle) dropB.add(c.bundle);
+    return !drop;
+  }).filter(c => !(c.bundle && dropB.has(c.bundle)));
+  const base = [...locked, ...keep]; const units = [];
+  DB.lessons.forEach(l => remainingParts(l, base).forEach(len => units.push({ lessonId: l.id, len, diff: len * 2 + l.classIds.length * 2 + l.teacherIds.length * 2 })));
+  return { keep, units };
+}
 function filterFeasibilityErrors(ctx) {
   const out = filterInputErrors(ctx.filters);
   if (!ctx.filters.minEnabled || out.length) return out;
@@ -792,13 +821,18 @@ function occAdd(occ, ctx, card, sign) {
 function conflicts(occ, ctx, lessonId, len, d, p) {
   const l = ctx.lmap[lessonId];
   if (p < 0 || p + len > ctx.P || d < 0 || d >= ctx.D) return null;
-  const sOff = ctx.sMap[l.subjectId]?.off || {};
-  for (let k = 0; k < len; k++) {
-    const kk = d + '-' + (p + k);
-    if (sOff[kk]) return null;
-    for (const t of l.teacherIds) if (ctx.tMap[t]?.off[kk]) return null;
-    for (const c of l.classIds) if (ctx.cMap[c]?.off[kk]) return null;
+  // Slot terhalang dikira sekali sahaja bagi setiap pelajaran (lebih pantas).
+  const bc = ctx._blocked || (ctx._blocked = {});
+  let bl = bc[lessonId];
+  if (!bl) {
+    bl = bc[lessonId] = new Uint8Array(ctx.D * ctx.P);
+    const sOff = ctx.sMap[l.subjectId]?.off || {};
+    for (let dd = 0; dd < ctx.D; dd++) for (let pp = 0; pp < ctx.P; pp++) {
+      const kk = dd + '-' + pp;
+      if (sOff[kk] || l.teacherIds.some(t => ctx.tMap[t]?.off[kk]) || l.classIds.some(c => ctx.cMap[c]?.off[kk])) bl[dd * ctx.P + pp] = 1;
+    }
   }
+  for (let k = 0; k < len; k++) if (bl[d * ctx.P + p + k]) return null;
   const found = new Set();
   for (let k = 0; k < len; k++) {
     const s = key3(d, p + k);
@@ -812,8 +846,11 @@ function softOk(occ, ctx, lessonId, len, d, p) {
   const l = ctx.lmap[lessonId];
   const limit = Math.max(1, Math.ceil(ctx.sessions[l.id] / ctx.D));
   if ((occ.perDay[l.id + ':' + d] || 0) >= limit) return false;
+  const f = ctx.filters;
   for (const tid of l.teacherIds) {
     if (!ctx.tMap[tid]) continue;
+    const lim = Math.min(ctx.tMap[tid].maxDay || Infinity, f.maxEnabled ? f.maxDay : Infinity);
+    if ((occ.tDay[tid + ':' + d] || 0) + len > lim) return false;
     const cards = teacherDayCards(occ, ctx, tid, d, { lessonId, len, day: d, period: p });
     if (teacherDayIssue(ctx, tid, cards)) return false;
   }
@@ -891,9 +928,12 @@ function placeBundle(occ, ctx, u, all, placed, mayBump) {
   put(d, p);
   return cf.map(x => ({ lessonId: x.lessonId, len: x.len, diff: 0 }));
 }
-async function attempt(ctx, lockedCards, units, shouldStop = () => false) {
+async function attempt(ctx, lockedCards, units, shouldStop = () => false, bound = Infinity, seedCards = []) {
   const occ = emptyOcc(); const placed = [];
   lockedCards.forEach(c => { occAdd(occ, ctx, c, 1); placed.push(c); });
+  // Kad benih (dari hasil terbaik sebelumnya) dikekalkan tetapi masih boleh dianjak.
+  seedCards.forEach(c => { const k = { ...c, locked: false }; occAdd(occ, ctx, k, 1); placed.push(k); });
+  let missingLen = 0;
   const queue = bundleUnits(ctx, units).map(u => ({ ...u, r: Math.random() })).sort((a, b) => (b.diff + b.r * 2) - (a.diff + a.r * 2));
   const unplaced = []; let budget = units.length * 25;
   const all = [];
@@ -907,10 +947,11 @@ async function attempt(ctx, lockedCards, units, shouldStop = () => false) {
       if (shouldStop()) { unplaced.push(...queue); break; }
     }
     const u = queue.shift();
-    if (u.members) { const r = placeBundle(occ, ctx, u, all, placed, budget-- > 0); if (r) { if (Array.isArray(r)) queue.unshift(...r); continue; } unplaced.push(...u.members); continue; }
-    let best = null, bestSc = Infinity;
-    for (const [d, p] of all) {
-      const cf = conflicts(occ, ctx, u.lessonId, u.len, d, p);
+    if (u.members) { const r = placeBundle(occ, ctx, u, all, placed, budget-- > 0); if (r) { if (Array.isArray(r)) queue.unshift(...r); continue; } unplaced.push(...u.members); missingLen += u.len * u.members.length; if (missingLen > bound) { return { placed, missing: Infinity, filterIssues: [], aborted: true }; } continue; }
+    let best = null, bestSc = Infinity; const cfs = new Array(all.length);
+    for (let ai = 0; ai < all.length; ai++) {
+      const [d, p] = all[ai];
+      const cf = cfs[ai] = conflicts(occ, ctx, u.lessonId, u.len, d, p);
       if (!cf || cf.length) continue;
       if (!softOk(occ, ctx, u.lessonId, u.len, d, p)) continue;
       const sc = score(occ, ctx, u.lessonId, u.len, d, p);
@@ -919,8 +960,8 @@ async function attempt(ctx, lockedCards, units, shouldStop = () => false) {
     if (best) { const c = { lessonId: u.lessonId, day: best[0], period: best[1], len: u.len, locked: false }; occAdd(occ, ctx, c, 1); placed.push(c); continue; }
     if (budget-- > 0) {
       const cand = [];
-      for (const [d, p] of all) {
-        const cf = conflicts(occ, ctx, u.lessonId, u.len, d, p);
+      for (let ai = 0; ai < all.length; ai++) {
+        const [d, p] = all[ai]; const cf = cfs[ai];
         if (!cf || !cf.length || cf.length > 2 || cf.some(x => x.locked || x.bundle)) continue;
         cf.forEach(x => occAdd(occ, ctx, x, -1));
         const ok = softOk(occ, ctx, u.lessonId, u.len, d, p);
@@ -934,7 +975,9 @@ async function attempt(ctx, lockedCards, units, shouldStop = () => false) {
         continue;
       }
     }
-    unplaced.push(u);
+    unplaced.push(u); missingLen += u.len;
+    // Henti awal: cubaan ini sudah lebih teruk daripada hasil terbaik — tidak perlu diteruskan.
+    if (missingLen > bound) { unplaced.push(...queue); queue.length = 0; return { placed, missing: Infinity, filterIssues: [], aborted: true }; }
   }
   return { placed, missing: unplaced.reduce((a, u) => a + u.len, 0), filterIssues: teacherFilterIssues(ctx, placed) };
 }
@@ -994,7 +1037,15 @@ async function runGenerate(untilComplete = false) {
   showProgress();
   try {
     while ((best.missing > 0 || best.filterIssues.length) && !shouldStop()) {
-      const r = await attempt(ctx, locked, units, shouldStop); tries++;
+      const bestScore = best.missing + best.filterIssues.length;
+      // Separuh cubaan membaiki hasil terbaik (lebih pantas), selebihnya bermula semula untuk kepelbagaian.
+      let r;
+      if (tries > 0 && best.placed.length > locked.length && Math.random() < 0.8) {
+        const sd = repairSeed(ctx, best, locked);
+        r = await attempt(ctx, locked, sd.units, shouldStop, bestScore, sd.keep);
+      } else r = await attempt(ctx, locked, units, shouldStop, bestScore);
+      tries++;
+      if (r.aborted) { if (tries % 5 === 0) { showProgress(); await new Promise(resolve => setTimeout(resolve, 0)); } continue; }
       r.filterIssues = teacherFilterIssues(ctx, r.placed);
       if ((r.missing === 0 && !r.filterIssues.length) || r.missing + r.filterIssues.length < best.missing + best.filterIssues.length) { best = r; DB.cards = best.placed; save(); }
       showProgress();
