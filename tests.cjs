@@ -111,6 +111,8 @@ DB.cards[0].period=0;DB.cards[1].period=0;DB.cards.pop();
 assert.equal(classUnits(DB.classes[0]),3,'parallel groups count once toward class load');
 assert.equal(normGroup('Entire class'),'');
 DB.cards[0].locked=true;unlockAll();assert.equal(DB.cards.every(c=>!c.locked),true,'unlock all removes every lock');
+{const ctx=buildCtx(0);const units=[{lessonId:'a',len:2,diff:1},{lessonId:'b',len:2,diff:1},{lessonId:'w',len:1,diff:1}];
+for(let i=0;i<20;i++){const b=bundleUnits(ctx,units);assert.equal(b.filter(u=>u.members).length,1,'PAI and PM generated as one combination');}}
 ` },
   { name: "ignore", fixture: true, run: `(async()=>{
  let move=fixture(); const others=DB.cards.slice(1);

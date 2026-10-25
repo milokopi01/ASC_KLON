@@ -175,7 +175,7 @@ td.multi>.cc{position:relative;inset:auto;display:block;min-height:0;margin:2px 
    off    = { "d-p": true }  (teacher / class / subject)
    ========================================================= */
 const KEY = 'digital-timetable-data-v2';
-const DEFAULT_API = 'https://script.google.com/macros/s/AKfycbxGJcfFARVLDv9XxzncZQU4TOD6dd5OvnKUO4gvyTDsUibZEzn1AfV_vBVcQHFLDC4/exec';
+const DEFAULT_API = 'https://script.google.com/macros/s/AKfycbxWhIjPBl2Tj2BhXzq3sFI4yGMgyn-pkfrF5spDJL4fr6wQtd-3PCX2JDZ2Ih1caUE_/exec';
 const PALETTE = ['#f59e0b','#22d3ee','#34d399','#f472b6','#a3e635','#fb923c','#60a5fa','#facc15','#f87171','#2dd4bf','#c084fc','#fda4af','#93c5fd','#86efac','#fcd34d','#67e8f9','#fdba74','#bef264','#a5b4fc','#f9a8d4'];
 const ALL_DAYS = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -832,10 +832,69 @@ function score(occ, ctx, lessonId, len, d, p) {
   l.classIds.forEach(c => { const cc = occ.cls[c] || {}; if (p > 0 && !cc[key3(d, p - 1)]) sc += 0.5; if (l.group && cc[key3(d, p)]) sc -= 4; for (let k = 0; k < len; k++) (cc[key3(d, p + k)] || []).forEach(x => { if (combinedShare(l, ctx.lmap[x.lessonId])) sc -= 6; }); });
   return sc;
 }
+// GABUNGAN: kad kumpulan dalam set gabungan kelas (cth PAI, PM) dijana sebagai satu ikatan
+// dan sentiasa diletakkan pada slot yang sama — tidak boleh dipisahkan.
+function inGroupSet(l, ctx) {
+  if (!l || !l.group) return false; const g = l.group.toUpperCase();
+  return l.classIds.some(id => groupSetsOf(ctx.cMap[id]).some(x => x.includes(g)));
+}
+function bundleUnits(ctx, units) {
+  const used = new Set(); const out = []; let bid = 0;
+  Object.values(ctx.cMap).forEach(c => groupSetsOf(c).forEach(set => {
+    const byG = {};
+    units.forEach((u, i) => { if (used.has(i) || u.members) return; const l = ctx.lmap[u.lessonId]; if (!l || !l.group || !l.classIds.includes(c.id)) return;
+      const g = l.group.toUpperCase(); if (set.includes(g)) (byG[g] = byG[g] || []).push(i); });
+    const gs = Object.keys(byG); if (gs.length < 2) return;
+    const lens = [...new Set(gs.flatMap(g => byG[g].map(i => units[i].len)))];
+    lens.forEach(len => {
+      const lists = gs.map(g => byG[g].filter(i => units[i].len === len && !used.has(i)));
+      while (lists.filter(x => x.length).length >= 2) {
+        const idx = lists.filter(x => x.length).map(x => x.shift()); idx.forEach(i => used.add(i));
+        const members = idx.map(i => units[i]);
+        out.push({ lessonId: members[0].lessonId, len, diff: members.reduce((a, m) => a + m.diff, 0) + 5, members, bundleId: 'b' + (++bid) });
+      }
+    });
+  }));
+  units.forEach((u, i) => { if (!used.has(i)) out.push(u); });
+  return out;
+}
+function bundleFits(occ, ctx, u, d, p) {
+  const tmp = []; let ok = true, sc = 0;
+  for (const m of u.members) {
+    const cf = conflicts(occ, ctx, m.lessonId, u.len, d, p);
+    if (!cf || cf.length || !softOk(occ, ctx, m.lessonId, u.len, d, p)) { ok = false; break; }
+    sc += score(occ, ctx, m.lessonId, u.len, d, p);
+    const c = { lessonId: m.lessonId, day: d, period: p, len: u.len, locked: false }; occAdd(occ, ctx, c, 1); tmp.push(c);
+  }
+  tmp.forEach(c => occAdd(occ, ctx, c, -1));
+  return ok ? sc : null;
+}
+function placeBundle(occ, ctx, u, all, placed, mayBump) {
+  const put = (d, p) => u.members.forEach(m => { const c = { lessonId: m.lessonId, day: d, period: p, len: u.len, locked: false, bundle: u.bundleId }; occAdd(occ, ctx, c, 1); placed.push(c); });
+  let best = null, bestSc = Infinity;
+  for (const [d, p] of all) { const sc = bundleFits(occ, ctx, u, d, p); if (sc !== null && sc < bestSc) { bestSc = sc; best = [d, p]; } }
+  if (best) { put(best[0], best[1]); return true; }
+  if (!mayBump) return false;
+  const cand = [];
+  for (const [d, p] of all) {
+    const cf = new Set(); let bad = false;
+    for (const m of u.members) { const r = conflicts(occ, ctx, m.lessonId, u.len, d, p); if (!r) { bad = true; break; } r.forEach(x => cf.add(x)); }
+    if (bad || !cf.size || cf.size > 2 || [...cf].some(x => x.locked || x.bundle)) continue;
+    cf.forEach(x => occAdd(occ, ctx, x, -1));
+    const ok = bundleFits(occ, ctx, u, d, p) !== null;
+    cf.forEach(x => occAdd(occ, ctx, x, 1));
+    if (ok) cand.push([d, p, [...cf]]);
+  }
+  if (!cand.length) return false;
+  const [d, p, cf] = cand[Math.floor(Math.random() * cand.length)];
+  cf.forEach(x => { occAdd(occ, ctx, x, -1); placed.splice(placed.indexOf(x), 1); });
+  put(d, p);
+  return cf.map(x => ({ lessonId: x.lessonId, len: x.len, diff: 0 }));
+}
 async function attempt(ctx, lockedCards, units, shouldStop = () => false) {
   const occ = emptyOcc(); const placed = [];
   lockedCards.forEach(c => { occAdd(occ, ctx, c, 1); placed.push(c); });
-  const queue = units.map(u => ({ ...u, r: Math.random() })).sort((a, b) => (b.diff + b.r * 2) - (a.diff + a.r * 2));
+  const queue = bundleUnits(ctx, units).map(u => ({ ...u, r: Math.random() })).sort((a, b) => (b.diff + b.r * 2) - (a.diff + a.r * 2));
   const unplaced = []; let budget = units.length * 25;
   const all = [];
   for (let d = 0; d < ctx.D; d++) for (let p = 0; p < ctx.P; p++) all.push([d, p]);
@@ -848,6 +907,7 @@ async function attempt(ctx, lockedCards, units, shouldStop = () => false) {
       if (shouldStop()) { unplaced.push(...queue); break; }
     }
     const u = queue.shift();
+    if (u.members) { const r = placeBundle(occ, ctx, u, all, placed, budget-- > 0); if (r) { if (Array.isArray(r)) queue.unshift(...r); continue; } unplaced.push(...u.members); continue; }
     let best = null, bestSc = Infinity;
     for (const [d, p] of all) {
       const cf = conflicts(occ, ctx, u.lessonId, u.len, d, p);
@@ -861,7 +921,7 @@ async function attempt(ctx, lockedCards, units, shouldStop = () => false) {
       const cand = [];
       for (const [d, p] of all) {
         const cf = conflicts(occ, ctx, u.lessonId, u.len, d, p);
-        if (!cf || !cf.length || cf.length > 2 || cf.some(x => x.locked)) continue;
+        if (!cf || !cf.length || cf.length > 2 || cf.some(x => x.locked || x.bundle)) continue;
         cf.forEach(x => occAdd(occ, ctx, x, -1));
         const ok = softOk(occ, ctx, u.lessonId, u.len, d, p);
         cf.forEach(x => occAdd(occ, ctx, x, 1));
@@ -916,7 +976,7 @@ async function runGenerate(untilComplete = false) {
   const t0 = performance.now(); let tries = 0;
   const occ = emptyOcc(); locked.forEach(c => occAdd(occ, ctx, c, 1));
   const baseline = [...locked];
-  DB.cards.filter(c => !c.locked).forEach(c => {
+  DB.cards.filter(c => !c.locked && !inGroupSet(ctx.lmap[c.lessonId], ctx)).forEach(c => {
     const cf = conflicts(occ, ctx, c.lessonId, c.len, c.day, c.period);
     if (cf && !cf.length && softOk(occ, ctx, c.lessonId, c.len, c.day, c.period) && remainingParts(ctx.lmap[c.lessonId], baseline).includes(c.len)) {
       baseline.push(c); occAdd(occ, ctx, c, 1);
