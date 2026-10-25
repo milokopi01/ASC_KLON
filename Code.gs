@@ -16,7 +16,7 @@
 
 var SPREADSHEET_ID = '12JX7U3KjfqRIr3HryEejK6xWqg2k8_ZH6YNTjDFQ45s';
 // Kata laluan untuk butang "Kosongkan" & "Muat naik Excel" dalam app. TUKAR kepada kata laluan anda sendiri.
-var ADMIN_KEY = 'tukar-kata-laluan-ini';
+var ADMIN_KEY = '101010';
 
 function doGet(e) {
   var out;

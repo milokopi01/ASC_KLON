@@ -169,7 +169,7 @@ td.multi>.cc{position:relative;inset:auto;display:block;min-height:0;margin:2px 
    off    = { "d-p": true }  (teacher / class / subject)
    ========================================================= */
 const KEY = 'digital-timetable-data-v2';
-const DEFAULT_API = 'https://script.google.com/macros/s/AKfycbzQdtVxssw3FEaauX761DRw5fsDUwDd8z6rNxHLEYAad_NASKFkS9a1RGOFZKE7hHeK/exec';
+const DEFAULT_API = 'https://script.google.com/macros/s/AKfycbxWhIjPBl2Tj2BhXzq3sFI4yGMgyn-pkfrF5spDJL4fr6wQtd-3PCX2JDZ2Ih1caUE_/exec';
 const PALETTE = ['#f59e0b','#22d3ee','#34d399','#f472b6','#a3e635','#fb923c','#60a5fa','#facc15','#f87171','#2dd4bf','#c084fc','#fda4af','#93c5fd','#86efac','#fcd34d','#67e8f9','#fdba74','#bef264','#a5b4fc','#f9a8d4'];
 const ALL_DAYS = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -233,7 +233,7 @@ normalize();
 function save() { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) { toast('Storan peranti penuh — eksport data anda.'); } schedulePush(); }
 // Auto-simpan ke Google Sheet (jika dipautkan ke Apps Script & kata laluan admin disimpan).
 let pushTimer = null, suppressPush = false;
-const adminKey = () => { try { return localStorage.getItem('dt-admin-key') || ''; } catch (e) { return ''; } };
+const adminKey = () => { try { return localStorage.getItem('dt-admin-key') || '101010'; } catch (e) { return ''; } };
 const canPush = () => typeof fetch === 'function' && /script\.google\.com\/macros\//.test((DB && DB.settings.sheetUrl) || '') && !!adminKey();
 function schedulePush() { if (suppressPush || !canPush()) return; clearTimeout(pushTimer); pushTimer = setTimeout(pushToSheet, 3000); }
 function readableRows() {
@@ -361,7 +361,7 @@ const VIEWS = {
       <div class="progress"><i id="g_bar"></i></div><div id="g_log" class="muted" style="margin-top:10px;font-size:13px"></div>
     </div>
     <div class="card"><h3>🗂 Urus data Google Sheet</h3><p class="muted">Kosongkan semua data dalam Google Sheet, atau ganti dengan fail Excel aSc baharu. Perlu URL Apps Script (/exec) dan kata laluan admin (ADMIN_KEY dalam Code.gs).</p>
-      <label>Kata laluan admin</label><input id="g_key" type="password" placeholder="ADMIN_KEY" autocomplete="off" value="${esc(adminKey())}" onchange="try{localStorage.setItem('dt-admin-key',this.value.trim())}catch(e){};schedulePush()">
+      <label>Kata laluan admin</label><input id="g_key" type="password" placeholder="101010" autocomplete="off" value="${esc(adminKey())}" onchange="try{localStorage.setItem('dt-admin-key',this.value.trim())}catch(e){};schedulePush()">
       <small class="muted">Bila kata laluan diisi, setiap perubahan dalam app disimpan automatik ke Google Sheet (tab _APP_STATE & JADUAL APP).</small>
       <div class="row" style="margin-top:12px"><button class="btn danger" onclick="clearSheetData()">🗑 Kosongkan semua data Google Sheet</button>
       <button class="btn pri" onclick="$('#sheetXlsxIn').click()">⬆ Muat naik Excel baharu ke Google Sheet</button><input type="file" id="sheetXlsxIn" accept=".xlsx,.xls" style="display:none">
