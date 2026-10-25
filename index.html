@@ -215,7 +215,7 @@ table.tt td.best-slot .slot-toggle::after{content:'⭐';font-size:12px}
    off    = { "d-p": true }  (teacher / class / subject)
    ========================================================= */
 const KEY = 'digital-timetable-data-v2';
-const DEFAULT_API = 'https://script.google.com/macros/s/AKfycbxtdz43RdN9PJxk17tlD_9PDiKqy9EeX67Y39gOr-aiHoz6PsMsD_cnEzmKszTZ1nEc/exec';
+const DEFAULT_API = 'https://script.google.com/macros/s/AKfycbxWhIjPBl2Tj2BhXzq3sFI4yGMgyn-pkfrF5spDJL4fr6wQtd-3PCX2JDZ2Ih1caUE_/exec';
 const PALETTE = ['#f59e0b','#22d3ee','#34d399','#f472b6','#a3e635','#fb923c','#60a5fa','#facc15','#f87171','#2dd4bf','#c084fc','#fda4af','#93c5fd','#86efac','#fcd34d','#67e8f9','#fdba74','#bef264','#a5b4fc','#f9a8d4'];
 const ALL_DAYS = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -295,15 +295,17 @@ function readableRows() {
     rows.push([S.days[c.day] || '', String(c.period + 1), (t[c.period] || '') + '', lClassesShort(l), subj(l.subjectId).name || '', lTeachers(l), l.roomId ? (byId(DB.rooms, l.roomId) || {}).name || '' : '', String(c.len), c.locked ? 'Ya' : '']); });
   return rows;
 }
-async function pushToSheet() {
-  if (generating) { schedulePush(); return; }
-  if (!canPush()) return;
+async function pushToSheet(manual) {
+  if (generating && !manual) { schedulePush(); return; }
+  const lg = m => { const el = document.querySelector('#s_log'); if (el) el.textContent = m; };
+  if (!canPush()) { if (manual) lg('✗ Perlu URL Apps Script (berakhir /exec) dan kata laluan admin.'); return; }
+  if (manual) lg('Menyimpan ke Google Sheet…');
   try {
     const json = JSON.stringify(DB), chunks = []; for (let i = 0; i < json.length; i += 40000) chunks.push(json.slice(i, i + 40000));
     const r = await fetch(DB.settings.sheetUrl.trim(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'saveState', key: adminKey(), chunks, readable: readableRows(), at: new Date().toISOString() }), redirect: 'follow' });
-    const j = await r.json(); if (!j.ok) throw new Error(j.error);
+    const j = await r.json(); if (!j.ok) throw new Error(/tidak dikenali/.test(j.error || '') ? 'Kod Apps Script lama. Tampal Code.gs terkini, kemudian Deploy > Manage deployments > Edit > Version: New version > Deploy.' : j.error);
     const el = document.querySelector('#s_log'); if (el && el.textContent !== undefined) el.textContent = '✓ Disimpan ke Google Sheet ' + new Date().toLocaleTimeString();
-  } catch (e) { toast('Gagal simpan ke Google Sheet: ' + (e.message || e)); }
+  } catch (e) { const m = 'Gagal simpan ke Google Sheet: ' + (e.message || e); lg('✗ ' + m); toast(m); }
 }
 
 const byId = (arr, id) => arr.find(x => x.id === id);
@@ -415,9 +417,10 @@ const VIEWS = {
     </div>
     <div class="card"><h3>🗂 Urus data Google Sheet</h3><p class="muted">Kosongkan semua data dalam Google Sheet, atau ganti dengan fail Excel aSc baharu. Perlu URL Apps Script (/exec) dan kata laluan admin (ADMIN_KEY dalam Code.gs).</p>
       <label>Kata laluan admin</label><input id="g_key" type="password" placeholder="101010" autocomplete="off" value="${esc(adminKey())}" onchange="try{localStorage.setItem('dt-admin-key',this.value.trim())}catch(e){};schedulePush()">
-      <small class="muted">Bila kata laluan diisi, setiap perubahan dalam app disimpan automatik ke Google Sheet (tab _APP_STATE & JADUAL APP).</small>
+      <small class="muted">Bila kata laluan diisi, setiap perubahan dalam app disimpan automatik ke Google Sheet (tab <b>JADUAL APP</b>). Kalau tab itu tiada, tekan 💾 Simpan sekarang dan baca mesej di bawah.</small>
       <div class="row" style="margin-top:12px"><button class="btn danger" onclick="clearSheetData()">🗑 Kosongkan semua data Google Sheet</button>
       <button class="btn pri" onclick="$('#sheetXlsxIn').click()">⬆ Muat naik Excel baharu ke Google Sheet</button><input type="file" id="sheetXlsxIn" accept=".xlsx,.xls" style="display:none">
+      <button class="btn pri" onclick="pushToSheet(true)">💾 Simpan jadual ke Google Sheet sekarang</button>
       <button class="btn" onclick="downloadSheetXlsx()">⬇ Muat turun data Google Sheet (.xlsx)</button></div>
       <div id="s_log" class="muted" style="margin-top:10px;font-size:13px"></div></div>
     <div class="card"><h3>📄 Atau muat naik fail Excel (.xlsx)</h3><p class="muted">Fail Excel yang sama dari aSc juga boleh dibuka terus tanpa Google Sheet.</p>

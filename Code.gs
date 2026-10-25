@@ -70,6 +70,7 @@ function doPost(e) {
         var jt = ss.getSheetByName('JADUAL APP') || ss.insertSheet('JADUAL APP');
         jt.clear();
         if (rd.length) { var w = rd[0].length; var r2 = jt.getRange(1, 1, rd.length, w); r2.setNumberFormat('@'); r2.setValues(rd.map(function (r) { var x = r.map(String); while (x.length < w) x.push(''); return x.slice(0, w); })); jt.getRange(1, 1, 1, w).setFontWeight('bold'); }
+        ss.setActiveSheet(jt); ss.moveActiveSheet(1);
         out = { ok: true, saved: body.at };
       } else throw new Error('Arahan tidak dikenali.');
     } finally { lock.releaseLock(); }
