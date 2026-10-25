@@ -103,8 +103,14 @@ DB.classes[0].groupSets='PAI, PM';
 assert.equal(canDrop('b',2,0,0).ok,true,'PAI and PM groups may share the slot');
 assert.equal(canDrop('w',1,0,0).ok,false,'entire-class lesson cannot overlap a group lesson');
 assert.equal(canDrop('a',2,0,0,null).ok,false,'same group cannot double up');
+DB.cards.push({lessonId:'b',day:0,period:0,len:2});
+assert.equal(groupMates(DB.cards[0]).length,2,'PAI and PM cards are grouped');
+assert.equal(placeDroppedCard({card:DB.cards[0],lessonId:'a',len:2},0,1),true);
+assert.equal(DB.cards[1].period,1,'grouped PM card moves with PAI');
+DB.cards[0].period=0;DB.cards[1].period=0;DB.cards.pop();
 assert.equal(classUnits(DB.classes[0]),3,'parallel groups count once toward class load');
 assert.equal(normGroup('Entire class'),'');
+DB.cards[0].locked=true;unlockAll();assert.equal(DB.cards.every(c=>!c.locked),true,'unlock all removes every lock');
 ` },
   { name: "ignore", fixture: true, run: `(async()=>{
  let move=fixture(); const others=DB.cards.slice(1);

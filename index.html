@@ -424,6 +424,7 @@ const VIEWS = {
         <button class="btn pri big" id="genUntilBtn" onclick="runGenerate(true)">⚡ Jana sehingga siap</button>
         <button class="btn danger big" id="genStopBtn" onclick="stopGenerate()" disabled>⏹ Berhenti</button>
         <button class="btn" onclick="clearCards(false)">Kosongkan (kekal kunci)</button>
+        <button class="btn" onclick="unlockAll()">🔓 Buka kunci semua</button>
         <button class="btn danger" onclick="clearCards(true)">Kosongkan semua</button>
       </div>
       <div class="progress"><i id="gbar"></i></div><p id="gmsg" class="muted"></p></div>`;
@@ -439,7 +440,7 @@ const VIEWS = {
     const unplaced = viewState.type !== 'room' && viewState.id ? unplacedFor(viewState.type, viewState.id) : [];
     const load = viewState.type === 'teacher' ? cardsFor('teacher', viewState.id).reduce((a, c) => a + c.len, 0) : null;
     return head('Jadual Waktu', `${esc(S.school)} · ${esc(S.year)} · ${placed}/${totalUnits} waktu disusun`,
-      `<button class="btn" onclick="window.print()">🖨 Cetak paparan</button><button class="btn" onclick="printAll()">🖨 Cetak semua ${viewState.type === 'class' ? 'kelas' : viewState.type === 'teacher' ? 'guru' : 'bilik'}</button><button class="btn" onclick="saveImage()">🖼 Simpan JPEG</button><button class="btn" onclick="exportCSV()">CSV</button>`) +
+      `<button class="btn" onclick="window.print()">🖨 Cetak paparan</button><button class="btn" onclick="printAll()">🖨 Cetak semua ${viewState.type === 'class' ? 'kelas' : viewState.type === 'teacher' ? 'guru' : 'bilik'}</button><button class="btn" onclick="saveImage()">🖼 Simpan JPEG</button><button class="btn" onclick="exportCSV()">CSV</button><button class="btn" onclick="unlockAll()">🔓 Buka kunci semua</button>`) +
     `<div class="card no-print"><div class="row">
       <div style="display:flex;gap:6px">${[['class','Kelas'],['teacher','Guru'],['room','Bilik']].map(t => `<button class="btn ${viewState.type === t[0] ? 'pri' : ''}" onclick="viewState.type='${t[0]}';viewState.id='';render()">${t[1]}</button>`).join('')}</div>
       <div style="min-width:240px;flex:1;max-width:380px"><select onchange="viewState.id=this.value;render()">${opts(list, viewState.id)}</select></div>
@@ -815,6 +816,13 @@ async function runGenerate(untilComplete = false) {
   }
 }
 
+function unlockAll() {
+  if (generating) return toast('Tekan Berhenti dahulu.');
+  const n = DB.cards.filter(c => c.locked).length;
+  if (!n) return toast('Tiada kad yang dikunci.');
+  if (!confirm(`Buka kunci ${n} kad subjek?`)) return;
+  DB.cards.forEach(c => c.locked = false); save(); render(); toast(`${n} kad dibuka kunci 🔓`);
+}
 function clearCards(all) {
   if (generating) return toast('Tekan Berhenti sebelum mengosongkan jadual.');
   if (!confirm(all ? 'Kosongkan semua slot termasuk yang dikunci?' : 'Kosongkan semua slot yang tidak dikunci?')) return;
@@ -903,17 +911,29 @@ function restoreSlotBlocks(data, overrides) {
     } else delete obj.off[key];
   });
 }
+// Kad kumpulan yang digabung (set gabungan kelas) pada slot sama bergerak bersama.
+function groupMates(card) {
+  if (!card) return [];
+  const l = lessonOf(card.lessonId); if (!l || !l.group) return [card];
+  return [card, ...DB.cards.filter(c => {
+    if (c === card || c.day !== card.day || c.period !== card.period || c.len !== card.len) return false;
+    const o = lessonOf(c.lessonId); if (!o || !o.group) return false;
+    return l.classIds.some(id => o.classIds.includes(id) && !groupsClash(l.group, o.group, klass(id)));
+  })];
+}
 function canDrop(lessonId, len, d, p, ignore) {
   const ctx = buildCtx(0);
   if (!ctx.lmap[lessonId]) return { ok: false, why: 'Pelajaran ini tidak lagi tersedia.' };
+  const mates = groupMates(ignore); const skip = new Set(mates);
   const cf = conflicts(emptyOcc(), ctx, lessonId, len, d, p);
   if (!cf) return { ok: false, why: 'Slot ini ditanda tidak boleh (masa tidak hadir / di luar hari).' };
+  for (const m of mates) if (m !== ignore && !conflicts(emptyOcc(), ctx, m.lessonId, len, d, p)) return { ok: false, why: 'Slot ini tidak boleh untuk subjek gabungan.' };
   // Check each card so all teacher/room clashes are listed, even in an already conflicting slot.
   DB.cards.forEach(c => {
-    if (c === ignore) return;
+    if (skip.has(c)) return;
     const occ = emptyOcc(); occAdd(occ, ctx, c, 1);
-    const hits = conflicts(occ, ctx, lessonId, len, d, p);
-    if (hits && hits.length) cf.push(c);
+    const ids = [lessonId, ...mates.filter(m => m !== ignore).map(m => m.lessonId)];
+    if (ids.some(id => { const hits = conflicts(occ, ctx, id, len, d, p); return hits && hits.length; })) cf.push(c);
   });
   if (cf.length) { const l = ctx.lmap[cf[0].lessonId]; return { ok: false, collisions: cf, why: `Bertindih dengan ${subj(l.subjectId).short} (${lClassesShort(l)}, ${lTeachersShort(l)}).` }; }
   return { ok: true, collisions: [] };
@@ -927,7 +947,7 @@ function placeDroppedCard(move, d, p, removeCollisions = false, ignoreCollisions
     const removed = new Set(result.collisions || []);
     DB.cards = DB.cards.filter(c => !removed.has(c));
   }
-  if (move.card) { move.card.day = d; move.card.period = p; move.card.locked = true; }
+  if (move.card) groupMates(move.card).forEach(c => { c.day = d; c.period = p; c.locked = true; });
   else DB.cards.push({ lessonId: move.lessonId, day: d, period: p, len: move.len, locked: true });
   save(); render();
   return true;
