@@ -632,7 +632,7 @@ const emptyOcc = () => ({ cls: {}, tch: {}, room: {}, perDay: {}, tDay: {} });
 const key3 = (d, p) => d * 100 + p;
 function occAdd(occ, ctx, card, sign) {
   const l = ctx.lmap[card.lessonId]; if (!l) return;
-  const set = (o, id, s) => { o[id] = o[id] || {}; if (sign > 0) o[id][s] = card; else if (o[id][s] === card) delete o[id][s]; };
+  const set = (o, id, s) => { o[id] = o[id] || {}; if (sign > 0) (o[id][s] = o[id][s] || []).push(card); else if (o[id][s]) { o[id][s] = o[id][s].filter(x => x !== card); if (!o[id][s].length) delete o[id][s]; } };
   const setC = (id, s) => { const o = occ.cls[id] = occ.cls[id] || {}; if (sign > 0) (o[s] = o[s] || []).push(card); else if (o[s]) { o[s] = o[s].filter(x => x !== card); if (!o[s].length) delete o[s]; } };
   for (let k = 0; k < card.len; k++) {
     const s = key3(card.day, card.period + k);
@@ -658,8 +658,8 @@ function conflicts(occ, ctx, lessonId, len, d, p) {
   for (let k = 0; k < len; k++) {
     const s = key3(d, p + k);
     l.classIds.forEach(id => (occ.cls[id]?.[s] || []).forEach(x => { const o = ctx.lmap[x.lessonId]; if (combinedShare(l, o)) return; if (groupsClash(l.group, o?.group)) found.add(x); }));
-    l.teacherIds.forEach(id => { const x = occ.tch[id]?.[s]; if (x) found.add(x); });
-    if (l.roomId) { const x = occ.room[l.roomId]?.[s]; if (x) found.add(x); }
+    l.teacherIds.forEach(id => (occ.tch[id]?.[s] || []).forEach(x => found.add(x)));
+    if (l.roomId) (occ.room[l.roomId]?.[s] || []).forEach(x => found.add(x));
   }
   return [...found];
 }
@@ -912,10 +912,11 @@ function canDrop(lessonId, len, d, p, ignore) {
   if (cf.length) { const l = ctx.lmap[cf[0].lessonId]; return { ok: false, collisions: cf, why: `Bertindih dengan ${subj(l.subjectId).short} (${lClassesShort(l)}, ${lTeachersShort(l)}).` }; }
   return { ok: true, collisions: [] };
 }
-function placeDroppedCard(move, d, p, removeCollisions = false) {
+function placeDroppedCard(move, d, p, removeCollisions = false, ignoreCollisions = false) {
+  if (generating) return false;
   if (move.card && !DB.cards.includes(move.card)) return false;
   const result = canDrop(move.lessonId, move.len, d, p, move.card);
-  if (!result.ok && (!removeCollisions || !result.collisions?.length)) return false;
+  if (!result.ok && (!(removeCollisions || ignoreCollisions) || !result.collisions?.length)) return false;
   if (removeCollisions) {
     const removed = new Set(result.collisions || []);
     DB.cards = DB.cards.filter(c => !removed.has(c));
@@ -929,10 +930,14 @@ function showDropCollisions(move, d, p, collisions) {
   openModal(`<h3>Pertindihan ditemui</h3><ul>${collisions.map(c => {
     const l = lessonOf(c.lessonId), s = subj(l.subjectId);
     return `<li><span class="dot" style="background:${s.color}"></span><b>${esc(s.short)}</b> (${esc(lTeachersShort(l))}) — ${esc(lClassesShort(l))} · ${esc(DB.settings.days[c.day])}:${c.period + 1}${c.len > 1 ? '–' + (c.period + c.len) : ''}${c.locked ? ' 🔒' : ''}</li>`;
-  }).join('')}</ul><div class="actions"><button class="btn" onclick="closeModal()">Batal</button><button class="btn pri" id="dropRemove" style="white-space:normal">✓ Gugurkan &amp; letakkan kad</button></div>`);
+  }).join('')}</ul><div class="actions" style="flex-wrap:wrap"><button class="btn" onclick="closeModal()">Batal</button><button class="btn" id="dropIgnore">Ignore</button><button class="btn pri" id="dropRemove" style="white-space:normal">✓ Gugurkan &amp; letakkan kad</button></div>`);
   $('#dropRemove').onclick = () => {
     if (!placeDroppedCard(move, d, p, true)) { closeModal(); toast('Slot tidak lagi boleh digunakan. Jadual tidak diubah.'); return; }
     closeModal(); toast('Kad bertembung digugurkan. Kad diletakkan & dikunci 🔒');
+  };
+  $('#dropIgnore').onclick = () => {
+    if (!placeDroppedCard(move, d, p, false, true)) { closeModal(); toast('Slot tidak lagi boleh digunakan. Jadual tidak diubah.'); return; }
+    closeModal(); toast('Pertindihan diabaikan. Kad diletakkan & dikunci 🔒');
   };
 }
 let drag = null;
