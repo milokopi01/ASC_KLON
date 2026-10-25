@@ -142,7 +142,84 @@ async function main() {
     await vm.runInContext(suite.run, context, { filename: suite.name + '-suite' });
     console.log('PASS suite: ' + suite.name);
   }
-  console.log('PASS: all 6 suites completed');
+  console.log('PASS: all ' + suites.length + ' suites completed');
 }
+
+const filterFixture = `
+save=()=>{}; toast=()=>{}; render=()=>{};
+DB=blank(); DB.settings.days=['Isnin','Selasa']; DB.settings.periods=10;
+DB.settings.times=defaultTimes(10); DB.settings.sheetUrl=''; DB.settings.autoSync=false;
+DB.classes=[{id:'a',name:'1A',off:{}},{id:'b',name:'1B',off:{}}];
+DB.teachers=[{id:'t',name:'Guru A',off:{},maxDay:0}];
+DB.subjects=[{id:'s',name:'Subjek',off:{}}];
+DB.lessons=[{id:'a',classIds:['a'],teacherIds:['t'],subjectId:'s',len:1,perWeek:10},
+{id:'b',classIds:['b'],teacherIds:['t'],subjectId:'s',len:1,perWeek:10}];
+function occupied(cards){const ctx=buildCtx(0),occ=emptyOcc();cards.forEach(c=>occAdd(occ,ctx,c,1));return {ctx,occ};}
+`;
+suites.push(
+  {name:'daily maximum',run:filterFixture+`
+DB.settings.teacherFilters.maxEnabled=true;DB.settings.teacherFilters.maxDay=4;
+let {ctx,occ}=occupied([{lessonId:'a',day:0,period:0,len:4}]);
+assert.equal(softOk(occ,ctx,'b',1,0,5),false);
+assert.equal(softOk(occ,ctx,'b',1,1,0),true);
+DB.teachers[0].maxDay=2;({ctx,occ}=occupied([{lessonId:'a',day:0,period:0,len:2}]));
+assert.equal(softOk(occ,ctx,'b',1,0,5),false);
+`},
+  {name:'daily minimum',run:filterFixture+`
+DB.settings.teacherFilters.minEnabled=true;DB.settings.teacherFilters.minDay=2;
+const ctx=buildCtx(0),cards=[{lessonId:'a',day:0,period:0,len:2},{lessonId:'b',day:1,period:0,len:1}];
+assert.equal(teacherFilterIssues(ctx,cards).length,1);
+cards[1].len=2;assert.equal(teacherFilterIssues(ctx,cards).length,0);
+cards.pop();assert.equal(teacherFilterIssues(ctx,cards).length,1);
+for(let p=0;p<10;p++)ctx.tMap.t.off['1-'+p]=true;
+assert.equal(teacherFilterIssues(ctx,cards).length,0);
+`},
+  {name:'four consecutive and one rest',run:filterFixture+`
+Object.assign(DB.settings.teacherFilters,{consecutiveEnabled:true,consecutiveMax:4,consecutiveRest:1});
+const {ctx,occ}=occupied([{lessonId:'a',day:0,period:0,len:4}]);
+assert.equal(softOk(occ,ctx,'b',1,0,4),false);
+assert.equal(softOk(occ,ctx,'b',1,0,5),true);
+assert.equal(softOk(emptyOcc(),ctx,'b',5,0,0),false);
+`},
+  {name:'adjustable consecutive rest',run:filterFixture+`
+Object.assign(DB.settings.teacherFilters,{consecutiveEnabled:true,consecutiveMax:4,consecutiveRest:2});
+const {ctx,occ}=occupied([{lessonId:'a',day:0,period:0,len:4}]);
+assert.equal(softOk(occ,ctx,'b',1,0,5),false);
+assert.equal(softOk(occ,ctx,'b',1,0,6),true);
+ctx.breaks.add(3);assert.equal(softOk(occ,ctx,'b',1,0,4),false);
+`},
+  {name:'one rest before another class',run:filterFixture+`
+Object.assign(DB.settings.teacherFilters,{restEnabled:true,classRest:1});
+let {ctx,occ}=occupied([{lessonId:'a',day:0,period:0,len:2}]);
+assert.equal(softOk(occ,ctx,'b',1,0,2),false);
+assert.equal(softOk(occ,ctx,'b',1,0,3),true);
+assert.equal(softOk(occ,ctx,'a',1,0,2),true);
+({ctx,occ}=occupied([{lessonId:'a',day:0,period:3,len:2}]));
+assert.equal(softOk(occ,ctx,'b',1,0,2),false);
+assert.equal(softOk(occ,ctx,'b',1,0,1),true);
+`},
+  {name:'disabled filters',run:filterFixture+`
+Object.assign(DB.settings.teacherFilters,{minDay:8,maxDay:1,consecutiveMax:1,classRest:3});
+const {ctx,occ}=occupied([{lessonId:'a',day:0,period:0,len:4}]);
+assert.equal(softOk(occ,ctx,'b',1,0,4),true);
+assert.equal(teacherFilterIssues(ctx,[{lessonId:'a',day:0,period:0,len:4}]).length,0);
+`},
+  {name:'impossible minimum and invalid inputs',run:filterFixture+`
+Object.assign(DB.settings.teacherFilters,{minEnabled:true,minDay:2});
+DB.lessons[0].perWeek=1;DB.lessons[1].perWeek=1;
+assert.equal(filterFeasibilityErrors(buildCtx(0)).length,1);
+Object.assign(DB.settings.teacherFilters,{maxEnabled:true,maxDay:1});
+assert.ok(filterInputErrors(DB.settings.teacherFilters).length>0);
+DB.settings.teacherFilters.minDay=1.5;assert.ok(filterInputErrors(DB.settings.teacherFilters).length>0);
+`},
+  {name:'actual generation with filters',run:filterFixture+`(async()=>{
+DB.lessons[0].perWeek=2;DB.lessons[1].perWeek=2;
+Object.assign(DB.settings.teacherFilters,{minEnabled:true,minDay:2,maxEnabled:true,maxDay:2,consecutiveEnabled:true,consecutiveMax:4,consecutiveRest:1,restEnabled:true,classRest:1});
+const ctx=buildCtx(0),units=DB.lessons.flatMap(l=>splitUnits(l).map(len=>({lessonId:l.id,len,diff:1})));
+const result=await attempt(ctx,[],units);
+assert.equal(result.missing,0);assert.equal(result.filterIssues.length,0);
+for(let d=0;d<2;d++)assert.equal(result.placed.filter(c=>c.day===d).reduce((n,c)=>n+c.len,0),2);
+})()`}
+);
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

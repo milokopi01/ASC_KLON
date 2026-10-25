@@ -37,6 +37,12 @@ main{padding:28px 32px;min-width:0}
 .head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:20px}
 .head h2{font-size:26px}.head p{margin:4px 0 0;color:var(--muted)}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:18px}
+.teacher-filters{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:18px 0;margin-bottom:18px}
+.filter-rule{padding:14px 0;border-bottom:1px solid var(--line)}
+.filter-rule .grid2{max-width:640px}
+.filter-toggle{display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--text);margin-bottom:10px;cursor:pointer}
+.teacher-filters input:disabled{opacity:.5}
+#tf_error{color:var(--red)}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
 label{font-size:12px;color:var(--muted);display:block;margin-bottom:4px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
@@ -169,7 +175,7 @@ td.multi>.cc{position:relative;inset:auto;display:block;min-height:0;margin:2px 
    off    = { "d-p": true }  (teacher / class / subject)
    ========================================================= */
 const KEY = 'digital-timetable-data-v2';
-const DEFAULT_API = 'https://script.google.com/macros/s/AKfycbz3KJ7LystEMiwRvXBkWa4QbvnV0MuLqWTIL41TZOtRqdE0YTu2Pt-sgVdy84YRAPza/exec';
+const DEFAULT_API = 'https://script.google.com/macros/s/AKfycbxWhIjPBl2Tj2BhXzq3sFI4yGMgyn-pkfrF5spDJL4fr6wQtd-3PCX2JDZ2Ih1caUE_/exec';
 const PALETTE = ['#f59e0b','#22d3ee','#34d399','#f472b6','#a3e635','#fb923c','#60a5fa','#facc15','#f87171','#2dd4bf','#c084fc','#fda4af','#93c5fd','#86efac','#fcd34d','#67e8f9','#fdba74','#bef264','#a5b4fc','#f9a8d4'];
 const ALL_DAYS = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -182,9 +188,14 @@ function defaultTimes(n, start = '07:30', dur = 30) {
   for (let i = 0; i < n; i++) { out.push({ s: f(t), e: f(t + dur) }); t += dur; }
   return out;
 }
+function defaultTeacherFilters() {
+  return { minEnabled: false, minDay: 1, maxEnabled: false, maxDay: 6,
+    consecutiveEnabled: false, consecutiveMax: 4, consecutiveRest: 1,
+    restEnabled: false, classRest: 1 };
+}
 function blank() {
   return {
-    settings: { school: '', year: String(new Date().getFullYear()), days: ['Isnin','Selasa','Rabu','Khamis','Jumaat'], periods: 10, times: defaultTimes(10), breaks: [], sheetUrl: DEFAULT_API, autoSync: true, extraTabs: '', blockOverrides: [] },
+    settings: { school: '', year: String(new Date().getFullYear()), days: ['Isnin','Selasa','Rabu','Khamis','Jumaat'], periods: 10, times: defaultTimes(10), breaks: [], sheetUrl: DEFAULT_API, autoSync: true, extraTabs: '', blockOverrides: [], teacherFilters: defaultTeacherFilters() },
     subjects: [], classes: [], rooms: [], teachers: [], lessons: [], cards: []
   };
 }
@@ -211,6 +222,7 @@ function normalize() {
   for (const k of Object.keys(b)) if (DB[k] === undefined) DB[k] = b[k];
   for (const k of Object.keys(b.settings)) if (DB.settings[k] === undefined) DB.settings[k] = b.settings[k];
   const S = DB.settings;
+  S.teacherFilters = { ...defaultTeacherFilters(), ...(S.teacherFilters || {}) };
   S.periods = Math.max(1, Math.min(20, +S.periods || 1));
   if (!Array.isArray(S.times)) S.times = [];
   while (S.times.length < S.periods) { const l = S.times[S.times.length - 1]; S.times.push(defaultTimes(2, l ? l.e : '07:30')[0]); }
@@ -443,10 +455,11 @@ const VIEWS = {
     `<div class="card"><h3>Semakan data</h3>
       ${issues.length ? `<ul>${issues.map(i => `<li style="margin:6px 0;color:${i.lvl === 'err' ? 'var(--red)' : 'var(--amber)'}">${i.lvl === 'err' ? '✖' : '⚠'} ${i.msg}</li>`).join('')}</ul>` : '<p class="pill ok">✔ Semua data kelihatan baik.</p>'}
     </div>
+    ${teacherFilterHTML()}
     <div class="card hero"><h3>Jana jadual</h3><p class="muted">Slot yang dikunci 🔒 (termasuk yang diimport dari Google Sheet) dikekalkan. Penjana hanya mengisi waktu yang belum disusun dan menyimpan keputusan terbaik.</p>
       <div class="grid2" style="max-width:640px">
         <div><label>Masa cubaan (saat)</label><input id="g_time" type="number" min="2" max="120" value="10"></div>
-        <div><label>Maks waktu berturut-turut guru (0 = tiada had)</label><input id="g_consec" type="number" min="0" max="20" value="0"></div>
+
       </div>
       <div class="row" style="margin-top:14px">
         <button class="btn pri big" id="genBtn" onclick="runGenerate()">⚡ Jana Jadual</button>
@@ -618,6 +631,101 @@ function copyLessons() {
 /* =========================================================
    CHECK DATA
    ========================================================= */
+function teacherFilterHTML() {
+  const f = DB.settings.teacherFilters;
+  const toggle = (key, text) => `<label class="filter-toggle"><input type="checkbox" id="tf_${key}" ${f[key] ? 'checked' : ''} onchange="saveTeacherFilters()">${text}</label>`;
+  const num = (key, text, enabled, min = 1) => `<div><label for="tf_${key}">${text}</label><input id="tf_${key}" type="number" min="${min}" max="20" value="${f[key]}" ${f[enabled] ? '' : 'disabled'} onchange="saveTeacherFilters()"></div>`;
+  return `<section class="teacher-filters no-print" aria-labelledby="filter-title"><h3 id="filter-title">Penapis khas guru</h3>
+    <div class="filter-rule">${toggle('minEnabled', 'Waktu minimum mengajar setiap hari')}<div class="grid2">${num('minDay', 'Minimum (waktu sehari)', 'minEnabled', 0)}</div></div>
+    <div class="filter-rule">${toggle('maxEnabled', 'Waktu maksimum mengajar setiap hari')}<div class="grid2">${num('maxDay', 'Maksimum (waktu sehari)', 'maxEnabled')}</div></div>
+    <div class="filter-rule">${toggle('consecutiveEnabled', 'Had mengajar berturut-turut & rehat selepasnya')}<div class="grid2">${num('consecutiveMax', 'Maksimum berturut-turut (waktu)', 'consecutiveEnabled')}${num('consecutiveRest', 'Rehat sebelum mengajar semula (waktu)', 'consecutiveEnabled')}</div></div>
+    <div class="filter-rule">${toggle('restEnabled', 'Rehat sebelum masuk kelas lain')}<div class="grid2">${num('classRest', 'Rehat antara kelas berlainan (waktu)', 'restEnabled')}</div></div>
+    <p class="muted">Minimum digunakan pada setiap hari persekolahan bagi guru yang mempunyai pelajaran, kecuali hari yang diblok sepenuhnya. Rehat dikira sebagai slot waktu kosong, bukan garis rehat. Had individu guru yang lebih rendah tetap digunakan.</p>
+    <p id="tf_error" role="alert"></p></section>`;
+}
+function saveTeacherFilters() {
+  if (generating) return;
+  const f = { ...DB.settings.teacherFilters };
+  for (const k of ['minEnabled', 'maxEnabled', 'consecutiveEnabled', 'restEnabled']) f[k] = !!$('#tf_' + k).checked;
+  for (const k of ['minDay', 'maxDay', 'consecutiveMax', 'consecutiveRest', 'classRest']) {
+    const el = $('#tf_' + k); f[k] = Number(el.value);
+  }
+  DB.settings.teacherFilters = f; save();
+  for (const [key, enabled] of [['minDay','minEnabled'], ['maxDay','maxEnabled'], ['consecutiveMax','consecutiveEnabled'], ['consecutiveRest','consecutiveEnabled'], ['classRest','restEnabled']]) $('#tf_' + key).disabled = !f[enabled];
+  $('#tf_error').textContent = filterInputErrors(f).join(' ');
+}
+function filterInputErrors(f) {
+  const out = [];
+  for (const [key, enabled] of [['minDay','minEnabled'], ['maxDay','maxEnabled'], ['consecutiveMax','consecutiveEnabled'], ['consecutiveRest','consecutiveEnabled'], ['classRest','restEnabled']]) {
+    if (f[enabled] && (!Number.isInteger(f[key]) || f[key] < (key === 'minDay' ? 0 : 1) || f[key] > 20)) out.push('Nilai penapis mesti nombor bulat antara ' + (key === 'minDay' ? 0 : 1) + ' hingga 20 waktu.');
+  }
+  if (f.minEnabled && f.maxEnabled && f.minDay > f.maxDay) out.push('Minimum harian tidak boleh melebihi maksimum harian.');
+  return out;
+}
+function teacherDayCards(occ, ctx, tid, day, candidate) {
+  const cards = new Set();
+  for (let p = 0; p < ctx.P; p++) (occ.tch[tid]?.[key3(day, p)] || []).forEach(c => cards.add(c));
+  if (candidate) cards.add(candidate);
+  return [...cards].sort((a,b) => a.period - b.period);
+}
+function teacherDayIssue(ctx, tid, cards) {
+  const f = ctx.filters, t = ctx.tMap[tid];
+  const busy = new Set(); cards.forEach(c => { for (let p = c.period; p < c.period + c.len; p++) busy.add(p); });
+  const limits = [t?.maxDay || 0, f.maxEnabled ? f.maxDay : 0].filter(n => n > 0);
+  if (limits.length && busy.size > Math.min(...limits)) return 'melebihi maksimum harian';
+  const max = f.consecutiveEnabled ? f.consecutiveMax : ctx.consecMax;
+  const rest = f.consecutiveEnabled ? f.consecutiveRest : 1;
+  if (max > 0) {
+    let run = 0, gap = rest;
+    for (let p = 0; p < ctx.P; p++) {
+      if (busy.has(p)) { if (gap >= rest) run = 0; run++; gap = 0; if (run > max) return 'melanggar had berturut-turut atau rehat selepasnya'; }
+      else gap++;
+      // Legacy callers retain their original visual-break behavior when the new filter is off.
+      if (!f.consecutiveEnabled && ctx.breaks.has(p)) { run = 0; gap = rest; }
+    }
+  }
+  if (f.restEnabled) {
+    for (let i = 1; i < cards.length; i++) {
+      const a = cards[i-1], b = cards[i];
+      const ca = [...ctx.lmap[a.lessonId].classIds].sort().join('|'), cb = [...ctx.lmap[b.lessonId].classIds].sort().join('|');
+      if (ca !== cb && b.period - (a.period + a.len) < f.classRest) return 'rehat antara kelas tidak mencukupi';
+    }
+  }
+  return '';
+}
+function teacherFilterIssues(ctx, cards, checkMinimum = true) {
+  const occ = emptyOcc(); cards.forEach(c => occAdd(occ, ctx, c, 1));
+  const out = [];
+  for (const tid of Object.keys(ctx.tMap)) {
+    if (!DB.lessons.some(l => l.teacherIds.includes(tid))) continue;
+    for (let d = 0; d < ctx.D; d++) {
+      const dayCards = teacherDayCards(occ, ctx, tid, d);
+      const issue = teacherDayIssue(ctx, tid, dayCards);
+      if (issue) out.push(`${ctx.tMap[tid].name} · ${DB.settings.days[d]}: ${issue}`);
+      if (checkMinimum && ctx.filters.minEnabled && Array.from({length:ctx.P}, (_,p) => p).some(p => !ctx.tMap[tid].off?.[d+'-'+p])) {
+        const busy = new Set(); dayCards.forEach(c => { for(let p=c.period;p<c.period+c.len;p++) busy.add(p); });
+        if (busy.size < ctx.filters.minDay) out.push(`${ctx.tMap[tid].name} · ${DB.settings.days[d]}: ${busy.size}/${ctx.filters.minDay} waktu minimum`);
+      }
+    }
+  }
+  return out;
+}
+function filterFeasibilityErrors(ctx) {
+  const out = filterInputErrors(ctx.filters);
+  if (!ctx.filters.minEnabled || out.length) return out;
+  for (const t of Object.values(ctx.tMap)) {
+    const load = sumPeriods(DB.lessons.filter(l => l.teacherIds.includes(t.id))); if (!load) continue;
+    let days = 0;
+    for (let d=0;d<ctx.D;d++) {
+      const available = Array.from({length:ctx.P}, (_,p)=>p).filter(p=>!t.off?.[d+'-'+p]).length;
+      if (!available) continue; days++;
+      const max = Math.min(available, t.maxDay || ctx.P, ctx.filters.maxEnabled ? ctx.filters.maxDay : ctx.P);
+      if (max < ctx.filters.minDay) out.push(`${t.name}: minimum ${ctx.filters.minDay} melebihi kapasiti ${DB.settings.days[d]} (${max}).`);
+    }
+    if (load < days * ctx.filters.minDay) out.push(`${t.name}: ${load} waktu seminggu tidak cukup untuk minimum ${ctx.filters.minDay} × ${days} hari.`);
+  }
+  return out;
+}
 function countOff(off) { const D = DB.settings.days.length, P = DB.settings.periods; return Object.keys(off).filter(k => { const [d, p] = k.split('-').map(Number); return d < D && p < P; }).length; }
 function checkData() {
   const S = DB.settings, D = S.days.length, P = S.periods, cap = D * P, out = [];
@@ -663,7 +771,7 @@ function buildCtx(consecMax) {
   const cMap = {}; DB.classes.forEach(c => cMap[c.id] = c);
   const sMap = {}; DB.subjects.forEach(s => sMap[s.id] = s);
   const sessions = {}; DB.lessons.forEach(l => sessions[l.id] = splitUnits(l).length);
-  return { D: S.days.length, P: S.periods, lmap, tMap, cMap, sMap, sessions, consecMax, breaks: new Set(S.breaks) };
+  return { D: S.days.length, P: S.periods, lmap, tMap, cMap, sMap, sessions, consecMax: consecMax || 0, filters: { ...defaultTeacherFilters(), ...S.teacherFilters }, breaks: new Set(S.breaks) };
 }
 const emptyOcc = () => ({ cls: {}, tch: {}, room: {}, perDay: {}, tDay: {} });
 const key3 = (d, p) => d * 100 + p;
@@ -705,17 +813,9 @@ function softOk(occ, ctx, lessonId, len, d, p) {
   const limit = Math.max(1, Math.ceil(ctx.sessions[l.id] / ctx.D));
   if ((occ.perDay[l.id + ':' + d] || 0) >= limit) return false;
   for (const tid of l.teacherIds) {
-    const t = ctx.tMap[tid]; if (!t) continue;
-    if (t.maxDay && (occ.tDay[tid + ':' + d] || 0) + len > t.maxDay) return false;
-    if (ctx.consecMax > 0) {
-      let run = 0;
-      for (let q = 0; q < ctx.P; q++) {
-        const busy = (q >= p && q < p + len) || !!occ.tch[tid]?.[key3(d, q)];
-        run = busy ? run + 1 : 0;
-        if (run > ctx.consecMax) return false;
-        if (ctx.breaks.has(q)) run = 0;
-      }
-    }
+    if (!ctx.tMap[tid]) continue;
+    const cards = teacherDayCards(occ, ctx, tid, d, { lessonId, len, day: d, period: p });
+    if (teacherDayIssue(ctx, tid, cards)) return false;
   }
   return true;
 }
@@ -723,7 +823,9 @@ function score(occ, ctx, lessonId, len, d, p) {
   const l = ctx.lmap[lessonId];
   let sc = Math.random() * 3 + p * 0.12;
   l.teacherIds.forEach(t => {
-    sc += (occ.tDay[t + ':' + d] || 0) * 0.6;
+    const daily = occ.tDay[t + ':' + d] || 0;
+    sc += daily * 0.6;
+    if (ctx.filters.minEnabled && daily < ctx.filters.minDay) sc -= 20 * Math.min(len, ctx.filters.minDay - daily);
     const tt = occ.tch[t] || {};
     if ((p > 0 && tt[key3(d, p - 1)]) || tt[key3(d, p + len)]) sc -= 0.3;
   });
@@ -774,7 +876,7 @@ async function attempt(ctx, lockedCards, units, shouldStop = () => false) {
     }
     unplaced.push(u);
   }
-  return { placed, missing: unplaced.reduce((a, u) => a + u.len, 0) };
+  return { placed, missing: unplaced.reduce((a, u) => a + u.len, 0), filterIssues: teacherFilterIssues(ctx, placed) };
 }
 let generating = false;
 let generationStopRequested = false;
@@ -786,11 +888,15 @@ function stopGenerate() {
 }
 async function runGenerate(untilComplete = false) {
   if (generating) return;
+  saveTeacherFilters();
+  const ctx = buildCtx(0);
+  const inputErrors = filterFeasibilityErrors(ctx);
+  if (inputErrors.length) { $('#tf_error').textContent = inputErrors.join(' '); $('#gmsg').textContent = '✖ Semak nilai penapis: ' + inputErrors.join(' '); return; }
+  const lockedIssues = teacherFilterIssues(ctx, DB.cards.filter(c => c.locked), false);
+  if (lockedIssues.length) { $('#gmsg').textContent = '✖ Slot dikunci melanggar penapis. Buka kunci atau ubah penapis: ' + lockedIssues.join('; '); return; }
   const _errs = checkData().filter(i => i.lvl === 'err');
   if (_errs.length && !confirm('Terdapat ' + _errs.length + ' ralat data (lihat senarai merah di atas). Sebahagian waktu mungkin tidak dapat disusun. Teruskan jana?')) return;
   const secs = Math.max(2, parseInt($('#g_time').value) || 10);
-  const consec = Math.max(0, parseInt($('#g_consec').value) || 0);
-  const ctx = buildCtx(consec);
   const locked = DB.cards.filter(c => c.locked);
   const units = [];
   DB.lessons.forEach(l => {
@@ -802,47 +908,48 @@ async function runGenerate(untilComplete = false) {
   });
   const total = units.reduce((a, u) => a + u.len, 0);
   const bar = $('#gbar'), msg = $('#gmsg'), btn = $('#genBtn');
-  if (!total) { msg.textContent = '✔ Semua waktu telah disusun.'; return; }
+  if (!total) { const issues = teacherFilterIssues(ctx, DB.cards); msg.textContent = issues.length ? '⚠ Penapis belum dipenuhi: ' + issues.join('; ') : '✔ Semua waktu telah disusun.'; return; }
   const untilBtn = $('#genUntilBtn'), stopBtn = $('#genStopBtn');
   generating = true; generationStopRequested = false;
   btn.disabled = true; untilBtn.disabled = true; stopBtn.disabled = false;
-  $('#g_time').disabled = true; $('#g_consec').disabled = true;
+  $('#g_time').disabled = true; document.querySelectorAll('.teacher-filters input').forEach(el => el.disabled = true);
   const t0 = performance.now(); let tries = 0;
   const occ = emptyOcc(); locked.forEach(c => occAdd(occ, ctx, c, 1));
   const baseline = [...locked];
   DB.cards.filter(c => !c.locked).forEach(c => {
     const cf = conflicts(occ, ctx, c.lessonId, c.len, c.day, c.period);
-    if (cf && !cf.length && remainingParts(ctx.lmap[c.lessonId], baseline).includes(c.len)) {
+    if (cf && !cf.length && softOk(occ, ctx, c.lessonId, c.len, c.day, c.period) && remainingParts(ctx.lmap[c.lessonId], baseline).includes(c.len)) {
       baseline.push(c); occAdd(occ, ctx, c, 1);
     }
   });
   const missingOf = cards => DB.lessons.reduce((n, l) => n + remainingParts(l, cards).reduce((a, len) => a + len, 0), 0);
-  let best = { placed: baseline, missing: missingOf(baseline) };
+  let best = { placed: baseline, missing: missingOf(baseline), filterIssues: teacherFilterIssues(ctx, baseline) };
   const elapsed = () => (performance.now() - t0) / 1000;
   const shouldStop = () => generationStopRequested || (!untilComplete && elapsed() >= secs);
   const showProgress = () => {
     bar.style.width = (total ? (total - best.missing) / total * 100 : 100) + '%';
-    msg.textContent = `Cubaan ${tries} · terbaik: ${total - best.missing}/${total} waktu · ${elapsed().toFixed(1)} saat${untilComplete ? ' · Tanpa had masa' : ''}`;
+    msg.textContent = `Cubaan ${tries} · terbaik: ${total - best.missing}/${total} waktu · ${elapsed().toFixed(1)} saat${untilComplete ? ' · Tanpa had masa' : ''} · ${best.filterIssues.length} syarat penapis belum dipenuhi`;
   };
   let error = null;
   showProgress();
   try {
-    while (best.missing > 0 && !shouldStop()) {
+    while ((best.missing > 0 || best.filterIssues.length) && !shouldStop()) {
       const r = await attempt(ctx, locked, units, shouldStop); tries++;
-      if (r.missing < best.missing) { best = r; DB.cards = best.placed; save(); }
+      r.filterIssues = teacherFilterIssues(ctx, r.placed);
+      if ((r.missing === 0 && !r.filterIssues.length) || r.missing + r.filterIssues.length < best.missing + best.filterIssues.length) { best = r; DB.cards = best.placed; save(); }
       showProgress();
       await new Promise(resolve => setTimeout(resolve, 0));
     }
   } catch (e) { error = e; }
   DB.cards = best.placed; save(); generating = false;
   btn.disabled = false; untilBtn.disabled = false; stopBtn.disabled = true; stopBtn.textContent = '⏹ Berhenti';
-  $('#g_time').disabled = false; $('#g_consec').disabled = false;
+  $('#g_time').disabled = false; document.querySelectorAll('.teacher-filters input[type=checkbox]').forEach(el => el.disabled = false); saveTeacherFilters();
   if (error) msg.textContent = 'Ralat: ' + error.message + '. Hasil terbaik disimpan.';
-  else if (best.missing === 0) {
+  else if (best.missing === 0 && !best.filterIssues.length) {
     msg.textContent = `✔ Berjaya! Semua waktu disusun dalam ${elapsed().toFixed(1)} saat.`;
     toast('Jadual berjaya dijana!');
   } else {
-    msg.textContent = `${generationStopRequested ? '⏹ Dihentikan' : '⚠ Masa cubaan tamat'} · hasil terbaik disimpan · ${best.missing} waktu belum disusun.`;
+    msg.textContent = `${generationStopRequested ? '⏹ Dihentikan' : '⚠ Masa cubaan tamat'} · hasil terbaik disimpan · ${best.missing} waktu belum disusun.${best.filterIssues.length ? ' Penapis belum dipenuhi (' + best.filterIssues.length + '): ' + best.filterIssues.slice(0, 8).join('; ') + (best.filterIssues.length > 8 ? '; …' : '') : ''}`;
   }
 }
 
@@ -1232,6 +1339,7 @@ function buildFromTabs(tabs, log) {
 }
 function applyImport(res, log) {
   if (generating) throw new Error('Hentikan penjana sebelum memuatkan data baharu.');
+  res.d.settings.teacherFilters = { ...DB.settings.teacherFilters };
   restoreSlotBlocks(res.d, DB.settings.blockOverrides);
   DB = res.d; normalize(); save();
   if (res.placedCount < res.totalPeriods) log(`⚠ ${res.totalPeriods - res.placedCount} waktu belum disusun — tekan "Semak & Jana" untuk lengkapkan secara automatik.`);
