@@ -81,6 +81,7 @@ table.tt td.brk{width:10px;background:transparent}
 .cc{position:absolute;inset:0;border-radius:10px;padding:6px 8px;color:#0b1220;font-size:12px;line-height:1.25;cursor:grab;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.25)}
 .cc b{font-family:Sora;font-size:13px;display:block}
 .cc .lk{position:absolute;right:5px;top:3px;font-size:11px}
+td.multi>.cc{position:relative;inset:auto;display:block;min-height:0;margin:2px 0;padding:3px 6px}td.multi>.cc+.cc{margin-top:3px}
 .cc.dbl{right:-4px}
 .unplaced{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .unplaced .chip{padding:5px 9px;border-radius:8px;color:#0b1220;font-size:12px;font-weight:700;cursor:grab}
@@ -242,6 +243,19 @@ const lClassesShort = l => l.classIds.map(id => klass(id).short).join(', ') || '
 const lTeachers = l => l.teacherIds.map(id => teach(id).name).join(', ') || 'Tanpa guru';
 const lTeachersShort = l => l.teacherIds.map(id => teach(id).short).join(', ') || '—';
 const sumPeriods = arr => arr.reduce((a, l) => a + l.perWeek, 0);
+// Kumpulan: '' = seluruh kelas. Dua pelajaran kelas yang sama boleh serentak hanya jika kedua-duanya kumpulan berbeza (cth PAI & PM).
+const normGroup = g => { g = String(g || '').trim(); return /^(entire class|seluruh kelas|semua|whole class)?$/i.test(g) ? '' : g; };
+const groupsClash = (a, b) => !a || !b || a.toUpperCase() === b.toUpperCase();
+// Kelas gabung: pelajaran subjek sama yang melibatkan beberapa kelas (dengan/tanpa guru) boleh berjalan serentak
+// dengan pelajaran subjek sama bagi kelas itu, jadi tidak dikira dua kali (bukan terlebih waktu).
+const isCombined = l => !!l && l.classIds.length > 1;
+const combinedShare = (a, b) => !!a && !!b && a.subjectId === b.subjectId && (isCombined(a) || isCombined(b));
+function classUnits(c) {
+  const ls = DB.lessons.filter(l => l.classIds.includes(c.id)); const g = {}; let whole = 0; const bySubj = {};
+  ls.forEach(l => { if (l.group) { g[l.group.toUpperCase()] = (g[l.group.toUpperCase()] || 0) + l.perWeek; return; }
+    const s = bySubj[l.subjectId] = bySubj[l.subjectId] || { comb: 0, own: 0 }; if (isCombined(l)) s.comb = Math.max(s.comb, l.perWeek); else s.own += l.perWeek; });
+  Object.values(bySubj).forEach(s => whole += Math.max(s.comb, s.own));
+  return whole + Math.max(0, ...Object.values(g)); }
 
 /* =========================================================
    UI HELPERS
@@ -355,7 +369,7 @@ const VIEWS = {
     const cap = DB.settings.days.length * DB.settings.periods;
     return head('Kelas', 'Senarai kelas di sekolah anda.', `<button class="btn pri" onclick="editClass()">+ Kelas baharu</button>`) +
     `<div class="card">${DB.classes.length ? `<table class="list"><tr><th>Nama kelas</th><th>Singkatan</th><th>Waktu/minggu</th><th>Tidak boleh</th><th></th></tr>
-      ${DB.classes.map(c => { const u = sumPeriods(DB.lessons.filter(l => l.classIds.includes(c.id))); const avail = cap - Object.keys(c.off).length;
+      ${DB.classes.map(c => { const u = classUnits(c); const avail = cap - Object.keys(c.off).length;
         return `<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.short)}</td><td><span class="pill ${u <= avail ? 'ok' : 'bad'}">${u}/${avail}</span></td><td>${Object.keys(c.off).length} slot</td>
       <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="editOff('classes','${c.id}')">Masa</button> <button class="btn sm" onclick="editClass('${c.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('classes','${c.id}')">Padam</button></td></tr>`; }).join('')}</table>` : '<div class="empty">Belum ada kelas.</div>'}</div>` + nextBtn('rooms', 'Seterusnya: Bilik');
   },
@@ -540,13 +554,14 @@ function editLesson(id, preset) {
     <div><label>Kelas</label><select id="f_class" multiple size="5">${opts(DB.classes, l.classIds)}</select><small class="muted">Ctrl/⌘ untuk pilih lebih dari satu (kelas bergabung)</small> <button type="button" class="btn sm" onclick="[...document.querySelectorAll('#f_class option')].forEach(o=>o.selected=true)">Pilih semua kelas</button></div>
     <div><label>Guru</label><select id="f_teach" multiple size="5">${opts(DB.teachers, l.teacherIds)}</select><small class="muted">Boleh pilih lebih dari satu (guru bersama)</small> <button type="button" class="btn sm" onclick="[...document.querySelectorAll('#f_teach option')].forEach(o=>o.selected=false)">Tanpa guru</button></div>
     <div><label>Subjek</label><select id="f_subj">${opts(DB.subjects, l.subjectId)}</select></div>
+    <div><label>Kumpulan</label><input id="f_grp" value="${esc(l.group || '')}" placeholder="Kosong = seluruh kelas"><small class="muted">Cth: PAI / PM — kumpulan berbeza boleh belajar serentak</small></div>
     <div><label>Bilik (pilihan)</label><select id="f_room">${opts(DB.rooms, l.roomId, x => x.name, '— Bilik darjah —')}</select></div>
     <div><label>Jumlah waktu seminggu</label><input id="f_pw" type="number" min="1" max="60" value="${l.perWeek}"></div>
     <div><label>Panjang sesi</label><select id="f_len">${[1, 2, 3, 4].map(n => `<option value="${n}" ${l.len === n ? 'selected' : ''}>${n === 1 ? 'Single (1 waktu)' : n === 2 ? 'Berkembar (2 waktu)' : n + ' waktu'}</option>`).join('')}</select></div>
   </div><p class="muted" style="font-size:12px">Kad aktiviti semua kelas (perhimpunan, Yasiin, koko, 1M1S): pilih subjek aktiviti → Tanpa guru → Pilih semua kelas → jumlah waktu → OK.<br>Contoh: 5 waktu seminggu dengan sesi berkembar = 2 sesi berkembar + 1 single.</p>`, () => {
     const classIds = [...$('#f_class').selectedOptions].map(x => x.value);
     if (!classIds.length) { toast('Pilih kelas.'); return false; }
-    const o = { classIds, teacherIds: [...$('#f_teach').selectedOptions].map(x => x.value), subjectId: $('#f_subj').value, roomId: $('#f_room').value, perWeek: Math.max(1, parseInt($('#f_pw').value) || 1), len: parseInt($('#f_len').value) || 1 };
+    const o = { classIds, teacherIds: [...$('#f_teach').selectedOptions].map(x => x.value), subjectId: $('#f_subj').value, roomId: $('#f_room').value, group: normGroup($('#f_grp').value), perWeek: Math.max(1, parseInt($('#f_pw').value) || 1), len: parseInt($('#f_len').value) || 1 };
     if (o.len > DB.settings.periods) { toast('Panjang sesi melebihi bilangan waktu sehari.'); return false; }
     if (id) { Object.assign(l, o); DB.cards = DB.cards.filter(c => c.lessonId !== id); }
     else DB.lessons.push({ id: uid(), ...o });
@@ -571,7 +586,7 @@ function checkData() {
   const S = DB.settings, D = S.days.length, P = S.periods, cap = D * P, out = [];
   if (!DB.classes.length) out.push({ lvl: 'err', msg: 'Tiada kelas.' });
   if (!DB.lessons.length) out.push({ lvl: 'err', msg: 'Tiada pelajaran.' });
-  DB.classes.forEach(c => { const u = sumPeriods(DB.lessons.filter(l => l.classIds.includes(c.id))); const avail = cap - countOff(c.off); if (u > avail) out.push({ lvl: 'err', msg: `Kelas <b>${esc(c.name)}</b> mempunyai ${u} waktu tetapi hanya ${avail} slot tersedia.` }); });
+  DB.classes.forEach(c => { const u = classUnits(c); const avail = cap - countOff(c.off); if (u > avail) out.push({ lvl: 'err', msg: `Kelas <b>${esc(c.name)}</b> mempunyai ${u} waktu tetapi hanya ${avail} slot tersedia.` }); });
   DB.teachers.forEach(t => {
     const u = sumPeriods(DB.lessons.filter(l => l.teacherIds.includes(t.id)));
     let avail = cap - countOff(t.off);
@@ -618,9 +633,10 @@ const key3 = (d, p) => d * 100 + p;
 function occAdd(occ, ctx, card, sign) {
   const l = ctx.lmap[card.lessonId]; if (!l) return;
   const set = (o, id, s) => { o[id] = o[id] || {}; if (sign > 0) o[id][s] = card; else if (o[id][s] === card) delete o[id][s]; };
+  const setC = (id, s) => { const o = occ.cls[id] = occ.cls[id] || {}; if (sign > 0) (o[s] = o[s] || []).push(card); else if (o[s]) { o[s] = o[s].filter(x => x !== card); if (!o[s].length) delete o[s]; } };
   for (let k = 0; k < card.len; k++) {
     const s = key3(card.day, card.period + k);
-    l.classIds.forEach(id => set(occ.cls, id, s));
+    l.classIds.forEach(id => setC(id, s));
     l.teacherIds.forEach(id => set(occ.tch, id, s));
     if (l.roomId) set(occ.room, l.roomId, s);
   }
@@ -641,7 +657,7 @@ function conflicts(occ, ctx, lessonId, len, d, p) {
   const found = new Set();
   for (let k = 0; k < len; k++) {
     const s = key3(d, p + k);
-    l.classIds.forEach(id => { const x = occ.cls[id]?.[s]; if (x) found.add(x); });
+    l.classIds.forEach(id => (occ.cls[id]?.[s] || []).forEach(x => { const o = ctx.lmap[x.lessonId]; if (combinedShare(l, o)) return; if (groupsClash(l.group, o?.group)) found.add(x); }));
     l.teacherIds.forEach(id => { const x = occ.tch[id]?.[s]; if (x) found.add(x); });
     if (l.roomId) { const x = occ.room[l.roomId]?.[s]; if (x) found.add(x); }
   }
@@ -674,7 +690,7 @@ function score(occ, ctx, lessonId, len, d, p) {
     const tt = occ.tch[t] || {};
     if ((p > 0 && tt[key3(d, p - 1)]) || tt[key3(d, p + len)]) sc -= 0.3;
   });
-  l.classIds.forEach(c => { const cc = occ.cls[c] || {}; if (p > 0 && !cc[key3(d, p - 1)]) sc += 0.5; });
+  l.classIds.forEach(c => { const cc = occ.cls[c] || {}; if (p > 0 && !cc[key3(d, p - 1)]) sc += 0.5; if (l.group && cc[key3(d, p)]) sc -= 4; for (let k = 0; k < len; k++) (cc[key3(d, p + k)] || []).forEach(x => { if (combinedShare(l, ctx.lmap[x.lessonId])) sc -= 6; }); });
   return sc;
 }
 async function attempt(ctx, lockedCards, units, shouldStop = () => false) {
@@ -812,7 +828,8 @@ function unplacedFor(type, id) {
 }
 function gridHTML(type, id, interactive) {
   const S = DB.settings, cards = cardsFor(type, id);
-  const at = {}; cards.forEach(c => { if (!at[c.day + '-' + c.period]) at[c.day + '-' + c.period] = c; });
+  const at = {}, more = {}; cards.forEach(c => { const k = c.day + '-' + c.period; if (!at[k]) at[k] = c; else (more[k] = more[k] || []).push(c); });
+  Object.keys(more).forEach(k => { const m = more[k].reduce((a, x) => x.len > a.len ? x : a, at[k]); if (m !== at[k]) { more[k] = [at[k], ...more[k].filter(x => x !== m)]; at[k] = m; } });
   const covered = {}; cards.forEach(c => { if (at[c.day + '-' + c.period] !== c) return; for (let k = 1; k < c.len; k++) covered[c.day + '-' + (c.period + k)] = c; });
   const obj = type === 'teacher' ? byId(DB.teachers, id) : type === 'class' ? byId(DB.classes, id) : null;
   let h = `<table class="tt"><tr><th></th>`;
@@ -828,15 +845,15 @@ function gridHTML(type, id, interactive) {
       let span = 1;
       if (c) { spanEnd = p + c.len - 1; span = c.len; for (let q = p; q < spanEnd; q++) if (S.breaks.includes(q)) span++; }
       const off = obj && obj.off && obj.off[k];
-      h += `<td ${span > 1 ? `colspan="${span}"` : ''} class="${off && !c ? 'off' : ''}" data-d="${di}" data-p="${p}">`;
-      if (c) {
+      h += `<td ${span > 1 ? `colspan="${span}"` : ''} class="${off && !c ? 'off' : ''}${more[k] ? ' multi' : ''}" data-d="${di}" data-p="${p}">`;
+      if (c) [c, ...(more[k] || [])].forEach(c => {
         const l = lessonOf(c.lessonId), s = subj(l.subjectId), r = room(l.roomId);
         const tc = l.teacherIds[0] ? teach(l.teacherIds[0]) : null;
         const color = type === 'room' && tc ? tc.color : s.color;
         const line2 = type === 'class' ? lTeachersShort(l) : type === 'teacher' ? lClassesShort(l) : lClassesShort(l) + ' · ' + lTeachersShort(l);
         const idx = DB.cards.indexOf(c);
         h += `<div class="cc" ${interactive ? `draggable="true" data-idx="${idx}"` : ''} style="background:${color};color:${contrast(color)}" title="${esc(s.name)} — ${esc(lClasses(l))} — ${esc(lTeachers(l))}"><b>${esc(s.short)}</b>${esc(line2)}${r && type !== 'room' ? '<br>' + esc(r.short) : ''}${c.locked && interactive ? '<span class="lk">🔒</span>' : ''}</div>`;
-      }
+      });
       if (!c && obj && interactive) h += `<button class="slot-toggle" type="button" data-slot-toggle aria-label="${off ? 'Buka blok' : 'Blok'} ${esc(d)}, waktu ${p + 1}" title="${off ? 'Buka blok' : 'Blok'}">${off ? '🔓' : ''}</button>`;
       h += '</td>';
       if (S.breaks.includes(p) && !(c && c.len > 1)) h += `<td class="brk"></td>`;
@@ -881,12 +898,42 @@ function restoreSlotBlocks(data, overrides) {
   });
 }
 function canDrop(lessonId, len, d, p, ignore) {
-  const ctx = buildCtx(0); const occ = emptyOcc();
-  DB.cards.forEach(c => { if (c !== ignore) occAdd(occ, ctx, c, 1); });
-  const cf = conflicts(occ, ctx, lessonId, len, d, p);
+  const ctx = buildCtx(0);
+  if (!ctx.lmap[lessonId]) return { ok: false, why: 'Pelajaran ini tidak lagi tersedia.' };
+  const cf = conflicts(emptyOcc(), ctx, lessonId, len, d, p);
   if (!cf) return { ok: false, why: 'Slot ini ditanda tidak boleh (masa tidak hadir / di luar hari).' };
-  if (cf.length) { const l = ctx.lmap[cf[0].lessonId]; return { ok: false, why: `Bertindih dengan ${subj(l.subjectId).short} (${lClassesShort(l)}, ${lTeachersShort(l)}).` }; }
-  return { ok: true };
+  // Check each card so all teacher/room clashes are listed, even in an already conflicting slot.
+  DB.cards.forEach(c => {
+    if (c === ignore) return;
+    const occ = emptyOcc(); occAdd(occ, ctx, c, 1);
+    const hits = conflicts(occ, ctx, lessonId, len, d, p);
+    if (hits && hits.length) cf.push(c);
+  });
+  if (cf.length) { const l = ctx.lmap[cf[0].lessonId]; return { ok: false, collisions: cf, why: `Bertindih dengan ${subj(l.subjectId).short} (${lClassesShort(l)}, ${lTeachersShort(l)}).` }; }
+  return { ok: true, collisions: [] };
+}
+function placeDroppedCard(move, d, p, removeCollisions = false) {
+  if (move.card && !DB.cards.includes(move.card)) return false;
+  const result = canDrop(move.lessonId, move.len, d, p, move.card);
+  if (!result.ok && (!removeCollisions || !result.collisions?.length)) return false;
+  if (removeCollisions) {
+    const removed = new Set(result.collisions || []);
+    DB.cards = DB.cards.filter(c => !removed.has(c));
+  }
+  if (move.card) { move.card.day = d; move.card.period = p; move.card.locked = true; }
+  else DB.cards.push({ lessonId: move.lessonId, day: d, period: p, len: move.len, locked: true });
+  save(); render();
+  return true;
+}
+function showDropCollisions(move, d, p, collisions) {
+  openModal(`<h3>Pertindihan ditemui</h3><ul>${collisions.map(c => {
+    const l = lessonOf(c.lessonId), s = subj(l.subjectId);
+    return `<li><span class="dot" style="background:${s.color}"></span><b>${esc(s.short)}</b> (${esc(lTeachersShort(l))}) — ${esc(lClassesShort(l))} · ${esc(DB.settings.days[c.day])}:${c.period + 1}${c.len > 1 ? '–' + (c.period + c.len) : ''}${c.locked ? ' 🔒' : ''}</li>`;
+  }).join('')}</ul><div class="actions"><button class="btn" onclick="closeModal()">Batal</button><button class="btn pri" id="dropRemove" style="white-space:normal">✓ Gugurkan &amp; letakkan kad</button></div>`);
+  $('#dropRemove').onclick = () => {
+    if (!placeDroppedCard(move, d, p, true)) { closeModal(); toast('Slot tidak lagi boleh digunakan. Jadual tidak diubah.'); return; }
+    closeModal(); toast('Kad bertembung digugurkan. Kad diletakkan & dikunci 🔒');
+  };
 }
 let drag = null;
 function bindGrid() {
@@ -908,11 +955,13 @@ function bindGrid() {
     td.addEventListener('dragleave', () => td.classList.remove('drop-ok', 'drop-bad'));
     td.addEventListener('drop', e => {
       e.preventDefault(); if (!drag) return;
-      const d = +td.dataset.d, p = +td.dataset.p; const r = canDrop(drag.lessonId, drag.len, d, p, drag.card);
-      if (!r.ok) { toast('✖ ' + r.why); drag = null; render(); return; }
-      if (drag.card) { drag.card.day = d; drag.card.period = p; drag.card.locked = true; }
-      else DB.cards.push({ lessonId: drag.lessonId, day: d, period: p, len: drag.len, locked: true });
-      drag = null; save(); render(); toast('Dialih & dikunci 🔒');
+      const move = { ...drag }, d = +td.dataset.d, p = +td.dataset.p;
+      const r = canDrop(move.lessonId, move.len, d, p, move.card);
+      drag = null;
+      document.querySelectorAll('.drop-ok,.drop-bad').forEach(x => x.classList.remove('drop-ok', 'drop-bad'));
+      if (r.collisions?.length) { showDropCollisions(move, d, p, r.collisions); return; }
+      if (!r.ok) { toast('✖ ' + r.why); render(); return; }
+      if (placeDroppedCard(move, d, p)) toast('Dialih & dikunci 🔒');
     });
   });
 }
@@ -1066,13 +1115,14 @@ function buildFromTabs(tabs, log) {
     const roomsStr = tLes.get(r, 'Available classrooms').split(',').map(norm).filter(Boolean);
     let roomId = '';
     if (roomsStr.length === 1 && !/HOME CLASSROOM/i.test(roomsStr[0])) { const rm = findBy(d.rooms, roomsStr[0]); if (rm) roomId = rm.id; }
-    d.lessons.push({ id: uid(), classIds, teacherIds, subjectId: getSubject(subjName).id, roomId, perWeek: count * len, len, _sessions: count });
+    d.lessons.push({ id: uid(), classIds, teacherIds, subjectId: getSubject(subjName).id, roomId, group: normGroup(tLes.get(r, 'Group')), perWeek: count * len, len, _sessions: count });
   });
 
   // Build cards from placements
   let placedCount = 0, unmatched = 0; const usedSlots = new Set(); // classId|day|period
   const subjByTab = tab => d.subjects.find(s => up(s.name) === tab) || d.subjects.find(s => up(s.short) === tab) || d.subjects.find(s => tab.length >= 20 && up(s.name).startsWith(tab.replace(/\d+$/, '')));
   const remaining = {}; d.lessons.forEach(l => remaining[l.id] = l._sessions);
+  const usedG = {}; const isUsed = (c, di, q, g) => (usedG[c + '|' + di + '|' + q] || []).some(x => groupsClash(g, x)); const markUsed = (c, di, q, g) => (usedG[c + '|' + di + '|' + q] = usedG[c + '|' + di + '|' + q] || []).push(g);
   Object.entries(placements).forEach(([tab, pl]) => {
     const s = subjByTab(tab); if (!s) return;
     const lessons = d.lessons.filter(l => l.subjectId === s.id);
@@ -1087,7 +1137,7 @@ function buildFromTabs(tabs, log) {
       for (let di = 0; di < days.length && remaining[l.id] > 0; di++) {
         let p = 0;
         while (p < P && remaining[l.id] > 0) {
-          const free = q => l.classIds.every(c => slots[c] && slots[c].has(di + '|' + q) && !usedSlots.has(c + '|' + di + '|' + q));
+          const free = q => l.classIds.every(c => slots[c] && slots[c].has(di + '|' + q) && !isUsed(c, di, q, l.group));
           if (!free(p)) { p++; continue; }
           let run = 1; while (p + run < P && run < l.len && free(p + run)) run++;
           // only accept a run shorter than len if it is a genuine (isolated) leftover
@@ -1095,7 +1145,7 @@ function buildFromTabs(tabs, log) {
             const altSingle = ordered.find(o => o !== l && remaining[o.id] > 0 && o.len <= run && o.classIds.length === l.classIds.length && o.classIds.every(c => l.classIds.includes(c)));
             if (altSingle) { p += run; continue; }
           }
-          for (let q = p; q < p + run; q++) l.classIds.forEach(c => usedSlots.add(c + '|' + di + '|' + q));
+          for (let q = p; q < p + run; q++) l.classIds.forEach(c => markUsed(c, di, q, l.group));
           d.cards.push({ lessonId: l.id, day: di, period: p, len: run, locked: true });
           remaining[l.id]--; placedCount += run; p += run;
         }
@@ -1104,9 +1154,9 @@ function buildFromTabs(tabs, log) {
     // second pass for leftovers that were skipped (shorter runs)
     ordered.forEach(l => {
       for (let di = 0; di < days.length && remaining[l.id] > 0; di++) for (let p = 0; p < P && remaining[l.id] > 0; p++) {
-        if (!l.classIds.every(c => slots[c] && slots[c].has(di + '|' + p) && !usedSlots.has(c + '|' + di + '|' + p))) continue;
-        let run = 1; while (p + run < P && run < l.len && l.classIds.every(c => slots[c].has(di + '|' + (p + run)) && !usedSlots.has(c + '|' + di + '|' + (p + run)))) run++;
-        for (let q = p; q < p + run; q++) l.classIds.forEach(c => usedSlots.add(c + '|' + di + '|' + q));
+        if (!l.classIds.every(c => slots[c] && slots[c].has(di + '|' + p) && !isUsed(c, di, p, l.group))) continue;
+        let run = 1; while (p + run < P && run < l.len && l.classIds.every(c => slots[c].has(di + '|' + (p + run)) && !isUsed(c, di, p + run, l.group))) run++;
+        for (let q = p; q < p + run; q++) l.classIds.forEach(c => markUsed(c, di, q, l.group));
         d.cards.push({ lessonId: l.id, day: di, period: p, len: run, locked: true }); remaining[l.id]--; placedCount += run; p += run - 1;
       }
     });

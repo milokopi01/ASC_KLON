@@ -1,4 +1,4 @@
-const CACHE = 'digital-timetable-v7';
+const CACHE = 'digital-timetable-v8';
 const ASSETS = ['./', './index.html', './manifest.json'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
