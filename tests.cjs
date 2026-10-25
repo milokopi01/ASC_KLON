@@ -57,7 +57,7 @@ console.log('PASS: class and teacher unblock/reblock, drop availability, sync pe
   { name: "collision", fixture: true, run: `let move=fixture();
 assert.deepEqual(Array.from(canDrop('pjA',1,0,2,move.card).collisions,c=>c.lessonId),['kmA','pjB'],'PJ onto KM also finds its teacher in another class');
 let before=JSON.stringify(DB); assert.equal(placeDroppedCard(move,0,2),false); assert.equal(JSON.stringify(DB),before,'without approval no cards move or disappear');
-assert.equal(placeDroppedCard(move,0,2,true),true); assert.equal(DB.cards.length,1); assert.equal(move.card.period,2); assert.equal(move.card.locked,true,'approval removes both collisions and places PJ');
+assert.equal(placeDroppedCard(move,0,2,true),true); assert.equal(DB.cards.length,1); assert.equal(move.card.period,2); assert.notEqual(move.card.locked,true,'approval removes both collisions and places PJ');
 assert.equal(DB.lessons.length,3); assert.equal(unplacedFor('class','a').some(x=>x.l.id==='kmA'),true); assert.equal(unplacedFor('class','b').some(x=>x.l.id==='pjB'),true,'removed cards return to unplaced lessons');
 move=fixture(); DB.classes[0].off['0-2']=true; before=JSON.stringify(DB); assert.equal(placeDroppedCard(move,0,2,true),false); assert.equal(JSON.stringify(DB),before,'approval cannot bypass blocked times');
 move=fixture(); DB.cards[2].period=1; DB.cards[2].len=2; assert.equal(canDrop('pjA',1,0,2,move.card).collisions.length,2,'teacher clashes across multi-period cards are detected');
@@ -116,7 +116,7 @@ for(let i=0;i<20;i++){const b=bundleUnits(ctx,units);assert.equal(b.filter(u=>u.
 ` },
   { name: "ignore", fixture: true, run: `(async()=>{
  let move=fixture(); const others=DB.cards.slice(1);
- assert.equal(placeDroppedCard(move,0,2,false,true),true);assert.equal(DB.cards.length,3);assert.equal(move.card.period,2);assert.equal(move.card.locked,true);assert.equal(DB.cards[1],others[0]);assert.equal(DB.cards[2],others[1],'manual Ignore retains every colliding card');
+ assert.equal(placeDroppedCard(move,0,2,false,true),true);assert.equal(DB.cards.length,3);assert.equal(move.card.period,2);assert.notEqual(move.card.locked,true,'drag does not auto-lock');assert.equal(DB.cards[1],others[0]);assert.equal(DB.cards[2],others[1],'manual Ignore retains every colliding card');
  move=fixture();generating=true;const before=JSON.stringify(DB);assert.equal(placeDroppedCard(move,0,2,false,true),false);assert.equal(JSON.stringify(DB),before,'Ignore disabled during automatic generation');generating=false;
  move=fixture();DB.classes[0].off['0-2']=true;assert.equal(placeDroppedCard(move,0,2,false,true),false,'Ignore does not bypass blocked periods');
  // All existing overlaps are locked: preserve them, but never add another overlap automatically.

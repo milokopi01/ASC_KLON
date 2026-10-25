@@ -155,6 +155,29 @@ table.overview .day-start{border-left:2px solid var(--overview-text)}
   .cc{box-shadow:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .screen-only{display:none!important}
 }
+/* === Paparan Keseluruhan: gaya moden 3D === */
+@media screen{
+#printArea{background:linear-gradient(160deg,#16213a,#0d1528);border:1px solid #2b3b5e;box-shadow:0 20px 50px -20px rgba(0,0,0,.8),inset 0 1px 0 rgba(255,255,255,.06)}
+.tt-wrap:has(table.overview){border-radius:14px;padding:6px;background:linear-gradient(145deg,#1b2742,#0f1830);box-shadow:inset 0 2px 8px rgba(0,0,0,.6),0 1px 0 rgba(255,255,255,.05)}
+table.overview{border-collapse:separate;border-spacing:3px;background:transparent;color:var(--text)}
+table.overview th,table.overview td{border:none}
+table.overview thead th{background:linear-gradient(180deg,#2a3a5f,#1a2644);color:#dbe6ff;font-weight:700;letter-spacing:.06em;border-radius:6px;box-shadow:0 2px 0 #0a1120,inset 0 1px 0 rgba(255,255,255,.12);text-shadow:0 1px 2px rgba(0,0,0,.6)}
+table.overview th.entity{background:linear-gradient(135deg,#f59e0b,#d97706);color:#1b1205;border-radius:8px;box-shadow:0 3px 0 #92400e,0 6px 12px -4px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.35);font-size:11px}
+table.overview td{background:linear-gradient(180deg,#1c2945,#141e36);border-radius:6px;box-shadow:inset 0 2px 4px rgba(0,0,0,.55)}
+table.overview .cc{border-radius:6px;margin:1px;box-shadow:0 3px 0 rgba(0,0,0,.35),0 6px 10px -4px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.45),inset 0 -2px 0 rgba(0,0,0,.15);background-image:linear-gradient(180deg,rgba(255,255,255,.28),rgba(255,255,255,0) 55%,rgba(0,0,0,.08));transition:transform .15s ease,box-shadow .15s ease}
+table.overview .cc:hover{transform:translateY(-3px) scale(1.04);z-index:3;position:relative;box-shadow:0 6px 0 rgba(0,0,0,.3),0 14px 20px -6px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.5)}
+table.overview .cc b{text-shadow:0 1px 0 rgba(255,255,255,.35)}
+table.overview td.multi>.cc+.cc{margin-top:2px}
+.btn.pri{background:linear-gradient(180deg,#fbbf24,#f59e0b);box-shadow:0 3px 0 #b45309,0 8px 14px -6px rgba(245,158,11,.7),inset 0 1px 0 rgba(255,255,255,.5)}
+.btn{transition:transform .12s ease,box-shadow .12s ease}
+.btn:active{transform:translateY(2px)}
+}
+table.tt.has-target tbody tr:not(.row-target){opacity:.35;filter:saturate(.5)}
+table.tt tr.row-target th.entity{outline:3px solid var(--cyan);outline-offset:-3px}
+table.tt tr.row-target td{box-shadow:inset 0 0 0 1px rgba(34,211,238,.45)}
+table.tt td.best-slot{background:linear-gradient(180deg,#fde68a,#f59e0b)!important;box-shadow:0 0 0 2px #fbbf24,0 0 18px rgba(245,158,11,.8)!important;animation:bestPulse 1.2s ease-in-out infinite}
+table.tt td.best-slot .slot-toggle::after{content:'⭐';font-size:12px}
+@keyframes bestPulse{50%{box-shadow:0 0 0 3px #fde68a,0 0 26px rgba(245,158,11,1)}}
 </style>
 </head>
 <body>
@@ -192,7 +215,7 @@ table.overview .day-start{border-left:2px solid var(--overview-text)}
    off    = { "d-p": true }  (teacher / class / subject)
    ========================================================= */
 const KEY = 'digital-timetable-data-v2';
-const DEFAULT_API = 'https://script.google.com/macros/s/AKfycbxGJcfFARVLDv9XxzncZQU4TOD6dd5OvnKUO4gvyTDsUibZEzn1AfV_vBVcQHFLDC4/exec';
+const DEFAULT_API = 'https://script.google.com/macros/s/AKfycbxWhIjPBl2Tj2BhXzq3sFI4yGMgyn-pkfrF5spDJL4fr6wQtd-3PCX2JDZ2Ih1caUE_/exec';
 const PALETTE = ['#f59e0b','#22d3ee','#34d399','#f472b6','#a3e635','#fb923c','#60a5fa','#facc15','#f87171','#2dd4bf','#c084fc','#fda4af','#93c5fd','#86efac','#fcd34d','#67e8f9','#fdba74','#bef264','#a5b4fc','#f9a8d4'];
 const ALL_DAYS = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -1205,14 +1228,22 @@ function suggestedSlots(move) {
 }
 function placeSuggested(move,d,p) {
   if(!suggestedSlots(move).some(s=>s.day===d&&s.period===p)) return false;
-  (move.members || [{lessonId:move.lessonId}]).forEach(m=>DB.cards.push({lessonId:m.lessonId,len:move.len,day:d,period:p,locked:true}));
+  (move.members || [{lessonId:move.lessonId}]).forEach(m=>DB.cards.push({lessonId:m.lessonId,len:move.len,day:d,period:p,locked:false}));
   selectedUnplaced=null;save();render();return true;
+}
+function bestSlot(move,slots) {
+  if(!slots.length) return null;
+  const ls=(move.members||[{lessonId:move.lessonId}]).map(m=>lessonOf(m.lessonId)).filter(Boolean);
+  const cls=new Set(ls.flatMap(l=>l.classIds)), subs=new Set(ls.map(l=>l.subjectId));
+  const score=s=>{let n=0,same=0;DB.cards.forEach(c=>{if(c.day!==s.day)return;const l=lessonOf(c.lessonId);if(!l||!l.classIds.some(id=>cls.has(id)))return;n+=c.len;if(subs.has(l.subjectId))same++;});return same*1000+n*10+s.period;};
+  return slots.reduce((a,b)=>score(b)<score(a)?b:a);
 }
 function targetMatches(td,move) {
   const l=lessonOf(move.lessonId);return !!l && (!td.dataset.entity || lessonMatch(l,td.dataset.type,td.dataset.entity));
 }
 function highlightSuggestions() {
-  document.querySelectorAll('td.suggested').forEach(td=>td.classList.remove('suggested'));
+  document.querySelectorAll('td.suggested,td.best-slot').forEach(td=>td.classList.remove('suggested','best-slot'));
+  document.querySelectorAll('tr.row-target,table.tt.has-target').forEach(x=>x.classList.remove('row-target','has-target'));
   document.querySelectorAll('.chip[data-new]').forEach(el=>{
     const on=!!selectedUnplaced&&el.dataset.new===selectedUnplaced.lessonId&&+el.dataset.len===selectedUnplaced.len;
     el.classList.toggle('selected',on);el.setAttribute('aria-pressed',String(on));
@@ -1225,7 +1256,16 @@ function highlightSuggestions() {
     if(slots.some(s=>s.day===d&&p>=s.period&&p<s.period+selectedUnplaced.len))td.classList.add('suggested');
     td.dataset.suggestStart=String(starts.has(d+'-'+p));
   });
-  if(status)status.textContent=slots.length ? slots.length+' cadangan penempatan' : 'Tiada slot sesuai yang mematuhi penapis dan gabungan.';
+  // Highlight the row(s) where this card belongs
+  document.querySelectorAll('table.tt tbody tr').forEach(tr=>{const td=tr.querySelector('td[data-entity]');if(td&&targetMatches(td,selectedUnplaced)){tr.classList.add('row-target');tr.closest('table').classList.add('has-target');}});
+  // Pick the best slot: day with fewest lessons for these classes, no same subject that day, earlier period
+  const best=bestSlot(selectedUnplaced,slots);let bestTd=null;
+  if(best) document.querySelectorAll('table.tt td[data-d]').forEach(td=>{
+    if(td.querySelector('.cc')||!targetMatches(td,selectedUnplaced))return;const d=+td.dataset.d,p=+td.dataset.p;
+    if(d===best.day&&p>=best.period&&p<best.period+selectedUnplaced.len){td.classList.add('best-slot');bestTd=bestTd||td;}
+  });
+  if(bestTd)bestTd.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});
+  if(status)status.textContent=slots.length ? slots.length+' cadangan penempatan'+(best?' · ⭐ Paling sesuai: '+DB.settings.days[best.day]+' waktu '+(best.period+1):'') : 'Tiada slot sesuai yang mematuhi penapis dan gabungan.';
 }
 function toggleSlotBlock(type, id, d, p) {
   const kind = type === 'class' ? 'classes' : type === 'teacher' ? 'teachers' : '';
@@ -1298,8 +1338,8 @@ function placeDroppedCard(move, d, p, removeCollisions = false, ignoreCollisions
     const removed = new Set(result.collisions || []);
     DB.cards = DB.cards.filter(c => !removed.has(c));
   }
-  if (move.card) groupMates(move.card).forEach(c => { c.day = d; c.period = p; c.locked = true; });
-  else DB.cards.push({ lessonId: move.lessonId, day: d, period: p, len: move.len, locked: true });
+  if (move.card) groupMates(move.card).forEach(c => { c.day = d; c.period = p; });
+  else DB.cards.push({ lessonId: move.lessonId, day: d, period: p, len: move.len, locked: false });
   save(); render();
   return true;
 }
