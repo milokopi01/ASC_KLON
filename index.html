@@ -230,7 +230,29 @@ function normalize() {
   DB.cards = (DB.cards || []).filter(c => ids.has(c.lessonId) && c.day >= 0 && c.day < S.days.length && c.period >= 0 && c.period + c.len <= S.periods);
 }
 normalize();
-function save() { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) { toast('Storan peranti penuh — eksport data anda.'); } }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) { toast('Storan peranti penuh — eksport data anda.'); } schedulePush(); }
+// Auto-simpan ke Google Sheet (jika dipautkan ke Apps Script & kata laluan admin disimpan).
+let pushTimer = null, suppressPush = false;
+const adminKey = () => { try { return localStorage.getItem('dt-admin-key') || ''; } catch (e) { return ''; } };
+const canPush = () => typeof fetch === 'function' && /script\.google\.com\/macros\//.test((DB && DB.settings.sheetUrl) || '') && !!adminKey();
+function schedulePush() { if (suppressPush || !canPush()) return; clearTimeout(pushTimer); pushTimer = setTimeout(pushToSheet, 3000); }
+function readableRows() {
+  const rows = [['Hari', 'Waktu', 'Masa', 'Kelas', 'Subjek', 'Guru', 'Bilik', 'Bil. waktu', 'Kunci']];
+  const S = DB.settings;
+  [...DB.cards].sort((a, b) => a.day - b.day || a.period - b.period).forEach(c => { const l = lessonOf(c.lessonId); if (!l) return; const t = S.times || [];
+    rows.push([S.days[c.day] || '', String(c.period + 1), (t[c.period] || '') + '', lClassesShort(l), subj(l.subjectId).name || '', lTeachers(l), l.roomId ? (byId(DB.rooms, l.roomId) || {}).name || '' : '', String(c.len), c.locked ? 'Ya' : '']); });
+  return rows;
+}
+async function pushToSheet() {
+  if (generating) { schedulePush(); return; }
+  if (!canPush()) return;
+  try {
+    const json = JSON.stringify(DB), chunks = []; for (let i = 0; i < json.length; i += 40000) chunks.push(json.slice(i, i + 40000));
+    const r = await fetch(DB.settings.sheetUrl.trim(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'saveState', key: adminKey(), chunks, readable: readableRows(), at: new Date().toISOString() }), redirect: 'follow' });
+    const j = await r.json(); if (!j.ok) throw new Error(j.error);
+    const el = document.querySelector('#s_log'); if (el && el.textContent !== undefined) el.textContent = '✓ Disimpan ke Google Sheet ' + new Date().toLocaleTimeString();
+  } catch (e) { toast('Gagal simpan ke Google Sheet: ' + (e.message || e)); }
+}
 
 const byId = (arr, id) => arr.find(x => x.id === id);
 const subj = id => byId(DB.subjects, id) || { name: '?', short: '?', color: '#888', off: {} };
@@ -338,6 +360,13 @@ const VIEWS = {
       ${S.sheetUrl ? `<button class="btn" onclick="shareLink()">📋 Salin pautan app untuk guru</button>` : ''}</div>
       <div class="progress"><i id="g_bar"></i></div><div id="g_log" class="muted" style="margin-top:10px;font-size:13px"></div>
     </div>
+    <div class="card"><h3>🗂 Urus data Google Sheet</h3><p class="muted">Kosongkan semua data dalam Google Sheet, atau ganti dengan fail Excel aSc baharu. Perlu URL Apps Script (/exec) dan kata laluan admin (ADMIN_KEY dalam Code.gs).</p>
+      <label>Kata laluan admin</label><input id="g_key" type="password" placeholder="ADMIN_KEY" autocomplete="off" value="${esc(adminKey())}" onchange="try{localStorage.setItem('dt-admin-key',this.value.trim())}catch(e){};schedulePush()">
+      <small class="muted">Bila kata laluan diisi, setiap perubahan dalam app disimpan automatik ke Google Sheet (tab _APP_STATE & JADUAL APP).</small>
+      <div class="row" style="margin-top:12px"><button class="btn danger" onclick="clearSheetData()">🗑 Kosongkan semua data Google Sheet</button>
+      <button class="btn pri" onclick="$('#sheetXlsxIn').click()">⬆ Muat naik Excel baharu ke Google Sheet</button><input type="file" id="sheetXlsxIn" accept=".xlsx,.xls" style="display:none">
+      <button class="btn" onclick="downloadSheetXlsx()">⬇ Muat turun data Google Sheet (.xlsx)</button></div>
+      <div id="s_log" class="muted" style="margin-top:10px;font-size:13px"></div></div>
     <div class="card"><h3>📄 Atau muat naik fail Excel (.xlsx)</h3><p class="muted">Fail Excel yang sama dari aSc juga boleh dibuka terus tanpa Google Sheet.</p>
       <input type="file" id="xlsxIn" accept=".xlsx,.xls"><div id="x_log" class="muted" style="margin-top:10px;font-size:13px"></div></div>
     <div class="card"><h3>Tab yang dibaca</h3><p class="muted" style="font-size:13px"><b>Subjects</b>, <b>Classes</b>, <b>Classrooms</b>, <b>Teachers</b>, <b>Lessons</b> dan tab jadual setiap subjek (cth: <b>MATEMATIK.</b>, <b>BAHASA MELAYU.</b>) yang mengandungi Day / Lesson / kelas. Masa tidak hadir guru, kelas dan subjek turut diimport. Waktu yang tiada dalam tab subjek boleh dilengkapkan dengan butang <b>Jana</b>.</p></div>`;
@@ -456,7 +485,8 @@ const VIEWS = {
 };
 AFTER.view = bindGrid;
 AFTER.home = () => { if (deferredPrompt) { const b = $('#installBtn'); if (b) b.style.display = ''; } };
-AFTER.sheet = () => { const x = $('#xlsxIn'); if (x) x.onchange = e => { const f = e.target.files[0]; if (f) importXlsxFile(f); e.target.value = ''; }; };
+AFTER.sheet = () => { const x = $('#xlsxIn'); if (x) x.onchange = e => { const f = e.target.files[0]; if (f) importXlsxFile(f); e.target.value = ''; };
+  const y = $('#sheetXlsxIn'); if (y) y.onchange = e => { const f = e.target.files[0]; if (f) uploadXlsxToSheet(f); e.target.value = ''; }; };
 
 /* =========================================================
    CRUD
@@ -1229,6 +1259,15 @@ async function syncSheet(manual) {
       if (!j.ok) throw new Error(j.error || 'Apps Script ralat');
       log('• ' + Object.keys(j.tabs).length + ' tab diterima' + (j.name ? ' dari "' + j.name + '"' : ''));
       if (bar) bar.style.width = '80%';
+      const st = j.tabs['_APP_STATE'];
+      if (st && st.length) {
+        const saved = JSON.parse(st.map(r => r[0] || '').join(''));
+        Object.assign(saved.settings, { sheetUrl: S.sheetUrl, autoSync: S.autoSync, extraTabs: S.extraTabs });
+        suppressPush = true; DB = saved; normalize(); save(); suppressPush = false;
+        log('✓ Data terkini app dimuat dari Google Sheet.'); if (bar) bar.style.width = '100%';
+        if (manual) setTimeout(() => go('view'), 900); else go(current === 'home' ? 'view' : current);
+        return;
+      }
       const res = buildFromTabs(j.tabs, log);
       res.d.settings.sheetUrl = S.sheetUrl; res.d.settings.autoSync = S.autoSync; res.d.settings.extraTabs = S.extraTabs;
       applyImport(res, log); if (bar) bar.style.width = '100%';
@@ -1284,6 +1323,55 @@ async function saveImage() {
   } catch (e) { toast('Gagal simpan gambar (perlu internet kali pertama).'); }
 }
 function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Gagal memuatkan pembaca Excel (perlu internet kali pertama).')); document.head.appendChild(s); }); }
+async function readXlsxTabs(file) {
+  if (!window.XLSX) await loadScript('https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js');
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', dense: true }); const tabs = {};
+  wb.SheetNames.forEach(n => { const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false, defval: '', blankrows: false });
+    tabs[n] = rows.map(r => { const a = r.map(c => String(c ?? '')); while (a.length && !a[a.length - 1].trim()) a.pop(); return a; }).filter(r => r.length); });
+  return tabs;
+}
+// Hantar arahan tulis ke Apps Script (doPost). text/plain = tiada preflight CORS.
+async function sheetPost(body) {
+  const url = ($('#g_url')?.value || DB.settings.sheetUrl || '').trim();
+  if (!/script\.google\.com\/macros\//.test(url)) throw new Error('Perlukan URL Apps Script (/exec), bukan pautan Google Sheet biasa.');
+  const key = $('#g_key')?.value || ''; if (!key) throw new Error('Sila isi kata laluan admin.');
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, key }), redirect: 'follow' });
+  let j; try { j = await r.json(); } catch (e) { throw new Error('Jawapan Apps Script tidak sah. Pastikan Code.gs terkini sudah di-Deploy (New version).'); }
+  if (!j.ok) throw new Error(j.error || 'Gagal.'); return j;
+}
+async function downloadSheetXlsx() {
+  const log = m => { const el = $('#s_log'); if (el) el.textContent = m; };
+  const url = ($('#g_url')?.value || DB.settings.sheetUrl || '').trim();
+  if (!/script\.google\.com\/macros\//.test(url)) return log('✖ Perlukan URL Apps Script (/exec).');
+  try {
+    log('⏳ Memuat turun dari Google Sheet ...');
+    if (!window.XLSX) await loadScript('https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js');
+    const r = await fetch(url + (url.includes('?') ? '&' : '?') + '_=' + Date.now(), { cache: 'no-store', redirect: 'follow' });
+    const j = await r.json(); if (!j.ok) throw new Error(j.error || 'Apps Script ralat');
+    const wb = XLSX.utils.book_new();
+    Object.keys(j.tabs).filter(n => n !== '_APP_STATE').forEach(n => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(j.tabs[n].length ? j.tabs[n] : [['']]), n.slice(0, 31)));
+    if (!wb.SheetNames.length) throw new Error('Google Sheet kosong.');
+    XLSX.writeFile(wb, (j.name || 'jadual-google-sheet').replace(/[^\w\- ]+/g, '_') + '.xlsx');
+    log('✓ Fail Excel dimuat turun.');
+  } catch (e) { log('✖ ' + e.message); }
+}
+async function clearSheetData() {
+  const log = m => { const el = $('#s_log'); if (el) el.textContent = m; };
+  if (!confirm('Kosongkan SEMUA data dalam Google Sheet? Tindakan ini tidak boleh diundur.')) return;
+  try { log('⏳ Mengosongkan Google Sheet ...'); const j = await sheetPost({ action: 'clear' }); log('✓ Google Sheet dikosongkan (' + j.sheets + ' tab).'); toast('Google Sheet dikosongkan.'); }
+  catch (e) { log('✖ ' + e.message); }
+}
+async function uploadXlsxToSheet(file) {
+  const log = m => { const el = $('#s_log'); if (el) el.textContent = m; };
+  if (!confirm('Gantikan SEMUA data Google Sheet dengan fail ' + file.name + '?')) return;
+  try {
+    log('⏳ Membaca ' + file.name + ' ...'); const tabs = await readXlsxTabs(file);
+    log('⏳ Menghantar ' + Object.keys(tabs).length + ' tab ke Google Sheet ...');
+    const j = await sheetPost({ action: 'replace', tabs });
+    log('✓ ' + j.sheets + ' tab dimasukkan ke Google Sheet. Memuat jadual ...'); toast('Excel dimasukkan ke Google Sheet.');
+    syncSheet(true);
+  } catch (e) { log('✖ ' + e.message); }
+}
 async function importXlsxFile(file) {
   const logEl = $('#x_log'); const lines = []; const log = m => { lines.push(m); if (logEl) logEl.innerHTML = lines.map(esc).join('<br>'); };
   try {
