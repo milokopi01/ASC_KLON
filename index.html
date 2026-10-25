@@ -14,6 +14,7 @@
 :root{
   --bg:#0b1220;--panel:#111a2e;--panel2:#16213a;--line:#24324f;--text:#e6ecf7;--muted:#8b9bbb;
   --amber:#f59e0b;--cyan:#22d3ee;--green:#34d399;--pink:#f472b6;--red:#f87171;
+  --suggestion:#c7f3ce;--suggestion-text:#163d20;--overview-bg:#d1d1d5;--overview-cell:#fff;--overview-line:#747478;--overview-text:#141419;
   --radius:14px;--shadow:0 10px 30px rgba(0,0,0,.35);
 }
 *{box-sizing:border-box}
@@ -91,6 +92,22 @@ td.multi>.cc{position:relative;inset:auto;display:block;min-height:0;margin:2px 
 .cc.dbl{right:-4px}
 .unplaced{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .unplaced .chip{padding:5px 9px;border-radius:8px;color:#0b1220;font-size:12px;font-weight:700;cursor:grab}
+.unplaced .chip.selected{outline:3px solid var(--green);outline-offset:2px}
+table.tt td.suggested{background:var(--suggestion);box-shadow:inset 0 0 0 2px var(--green)}
+table.tt td.suggested .slot-toggle{color:var(--suggestion-text)}
+table.overview{border-collapse:collapse;border-spacing:0;min-width:720px;width:100%;table-layout:fixed;background:var(--overview-bg);color:var(--overview-text)}
+table.overview th,table.overview td{border:1px solid var(--overview-line);border-radius:0;padding:0;text-align:center}
+table.overview th{color:var(--overview-text);font-size:10px;height:23px}
+table.overview th.entity{position:sticky;left:0;z-index:2;width:72px;background:var(--overview-bg)}
+table.overview td{height:38px;background:var(--overview-cell);vertical-align:top}
+table.overview .cc{border-radius:0;padding:3px 2px;box-shadow:none;font-size:10px;line-height:1.2}
+table.overview .cc b{font-family:Manrope;font-size:11px;overflow-wrap:anywhere}
+table.overview td.multi>.cc{margin:0;min-height:19px;padding:2px}
+table.overview td.multi>.cc+.cc{margin:0}
+table.overview .slot-toggle{height:38px;border-radius:0;font-size:12px}
+table.overview td.off{background:var(--overview-bg)}
+table.overview .day-start{border-left:2px solid var(--overview-text)}
+@media print{table.overview{min-width:0}table.overview td{height:28px}table.overview .cc{print-color-adjust:exact}table.overview th.entity{position:static}}
 /* modal */
 .modal{position:fixed;inset:0;background:rgba(3,6,14,.7);display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
 .modal.show{display:flex}
@@ -175,7 +192,7 @@ td.multi>.cc{position:relative;inset:auto;display:block;min-height:0;margin:2px 
    off    = { "d-p": true }  (teacher / class / subject)
    ========================================================= */
 const KEY = 'digital-timetable-data-v2';
-const DEFAULT_API = 'https://script.google.com/macros/s/AKfycbxGJcfFARVLDv9XxzncZQU4TOD6dd5OvnKUO4gvyTDsUibZEzn1AfV_vBVcQHFLDC4/exec';
+const DEFAULT_API = 'https://script.google.com/macros/s/AKfycbxWhIjPBl2Tj2BhXzq3sFI4yGMgyn-pkfrF5spDJL4fr6wQtd-3PCX2JDZ2Ih1caUE_/exec';
 const PALETTE = ['#f59e0b','#22d3ee','#34d399','#f472b6','#a3e635','#fb923c','#60a5fa','#facc15','#f87171','#2dd4bf','#c084fc','#fda4af','#93c5fd','#86efac','#fcd34d','#67e8f9','#fdba74','#bef264','#a5b4fc','#f9a8d4'];
 const ALL_DAYS = ['Ahad','Isnin','Selasa','Rabu','Khamis','Jumaat','Sabtu'];
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -311,7 +328,8 @@ const opts = (arr, sel, label = x => x.name, empty) => {
 function contrast(hex) { const h = String(hex).replace('#', ''); if (h.length < 6) return '#0b1220'; const r = parseInt(h.substr(0, 2), 16), g = parseInt(h.substr(2, 2), 16), b = parseInt(h.substr(4, 2), 16); return (r * 299 + g * 587 + b * 114) / 1000 > 140 ? '#0b1220' : '#ffffff'; }
 
 let current = 'home';
-const viewState = { type: 'class', id: '', lf: '' };
+const viewState = { type: 'class', id: '', lf: '', overview: false };
+let selectedUnplaced = null;
 function go(v) {
   if (generating) { toast('Tekan Berhenti sebelum meninggalkan penjana.'); return; }
   current = v;
@@ -478,21 +496,22 @@ const VIEWS = {
     if (!list.find(x => x.id === viewState.id)) viewState.id = list[0]?.id || '';
     const totalUnits = sumPeriods(DB.lessons);
     const placed = DB.cards.reduce((a, c) => a + c.len, 0);
-    const body = list.length ? gridHTML(viewState.type, viewState.id, true) : '<div class="empty">Tiada data untuk dipaparkan.</div>';
-    const unplaced = viewState.type !== 'room' && viewState.id ? unplacedFor(viewState.type, viewState.id) : [];
+    const body = list.length ? (viewState.overview ? overviewHTML(viewState.type, list) : gridHTML(viewState.type, viewState.id, true)) : '<div class="empty">Tiada data untuk dipaparkan.</div>';
+    const unplaced = viewState.overview ? DB.lessons.flatMap(l => remainingParts(l, DB.cards).map(len => ({l, len}))) : viewState.type !== 'room' && viewState.id ? unplacedFor(viewState.type, viewState.id) : [];
     const load = viewState.type === 'teacher' ? cardsFor('teacher', viewState.id).reduce((a, c) => a + c.len, 0) : null;
     return head('Jadual Waktu', `${esc(S.school)} · ${esc(S.year)} · ${placed}/${totalUnits} waktu disusun`,
       `<button class="btn" onclick="window.print()">🖨 Cetak paparan</button><button class="btn" onclick="printAll()">🖨 Cetak semua ${viewState.type === 'class' ? 'kelas' : viewState.type === 'teacher' ? 'guru' : 'bilik'}</button><button class="btn" onclick="saveImage()">🖼 Simpan JPEG</button><button class="btn" onclick="exportCSV()">CSV</button><button class="btn" onclick="unlockAll()">🔓 Buka kunci semua</button>`) +
     `<div class="card no-print"><div class="row">
-      <div style="display:flex;gap:6px">${[['class','Kelas'],['teacher','Guru'],['room','Bilik']].map(t => `<button class="btn ${viewState.type === t[0] ? 'pri' : ''}" onclick="viewState.type='${t[0]}';viewState.id='';render()">${t[1]}</button>`).join('')}</div>
-      <div style="min-width:240px;flex:1;max-width:380px"><select onchange="viewState.id=this.value;render()">${opts(list, viewState.id)}</select></div>
+      <div style="display:flex;gap:6px">${[['class','Kelas'],['teacher','Guru'],['room','Bilik']].map(t => `<button class="btn ${viewState.type === t[0] ? 'pri' : ''}" onclick="viewState.type='${t[0]}';viewState.id='';selectedUnplaced=null;render()">${t[1]}</button>`).join('')}</div>
+      <button class="btn ${viewState.overview ? 'pri' : ''}" onclick="viewState.overview=!viewState.overview;selectedUnplaced=null;render()">▦ Keseluruhan</button>
+      ${!viewState.overview ? `<div style="min-width:240px;flex:1;max-width:380px"><select onchange="viewState.id=this.value;selectedUnplaced=null;render()">${opts(list, viewState.id)}</select></div>` : ''}
       ${load !== null ? `<span class="pill">${load} waktu seminggu</span>` : ''}
       <span class="muted" style="font-size:12px">Seret kad untuk alih · klik kad untuk kunci/buka/buang</span></div></div>
     <div class="card" id="printArea">
-      <div class="print-only"><h2>${esc(nameOf(viewState.type, viewState.id))}</h2><div class="muted">${esc(S.school)} · ${esc(S.year)}</div></div>
-      <div class="tt-wrap">${body}</div>
-      ${unplaced.length ? `<div class="no-print" style="margin-top:14px"><b style="color:var(--red)">Belum disusun (${unplaced.reduce((a, u) => a + u.len, 0)} waktu)</b> <span class="muted">— seret ke slot kosong, atau tekan Jana</span>
-        <div class="unplaced">${unplaced.map(u => { const s = subj(u.l.subjectId); return `<div class="chip" draggable="true" data-new="${u.l.id}" data-len="${u.len}" style="background:${s.color};color:${contrast(s.color)}">${esc(s.short)} · ${esc(viewState.type === 'class' ? lTeachersShort(u.l) : lClassesShort(u.l))}${u.len > 1 ? ' ×' + u.len : ''}</div>`; }).join('')}</div></div>` : ''}
+      <div class="print-only"><h2>${esc(viewState.overview ? 'Keseluruhan Jadual' : nameOf(viewState.type, viewState.id))}</h2><div class="muted">${esc(S.school)} · ${esc(S.year)}</div></div>
+      <div class="tt-wrap">${body}</div><div id="suggestionStatus" class="muted no-print" role="status" aria-live="polite"></div>
+      ${unplaced.length ? `<div class="no-print" style="margin-top:14px"><b style="color:var(--red)">Belum disusun (${unplaced.reduce((a, u) => a + u.len, 0)} waktu)</b> <span class="muted"></span>
+        <div class="unplaced">${unplaced.map(u => { const s = subj(u.l.subjectId); return `<button type="button" class="chip" draggable="true" aria-pressed="false" data-new="${u.l.id}" data-len="${u.len}" style="background:${s.color};color:${contrast(s.color)}">${esc(s.short)} · ${esc(viewState.type === 'class' ? lTeachersShort(u.l) : lClassesShort(u.l))}${viewState.overview ? ' · ' + esc(lClassesShort(u.l)) : ''}${u.len > 1 ? ' ×' + u.len : ''}</button>`; }).join('')}</div></div>` : ''}
     </div><div id="printAll" class="print-only"></div>`;
   }
 };
@@ -1124,6 +1143,90 @@ function gridHTML(type, id, interactive) {
   });
   return h + '</table>';
 }
+function overviewHTML(type, list) {
+  const S = DB.settings;
+  let h = '<table class="tt overview"><thead><tr><th class="entity" rowspan="2">' + (type === 'class' ? 'Kelas' : type === 'teacher' ? 'Guru' : 'Bilik') + '</th>';
+  S.days.forEach(d => h += `<th colspan="${S.periods}" class="day-start">${esc(d.toUpperCase())}</th>`);
+  h += '</tr><tr>';
+  S.days.forEach(() => { for (let p=0;p<S.periods;p++) h += `<th class="${p===0?'day-start':''}" title="${esc(S.times[p]?.s || '')}–${esc(S.times[p]?.e || '')}">${p+1}</th>`; });
+  h += '</tr></thead><tbody>';
+  list.forEach(obj => {
+    const cards = cardsFor(type,obj.id);
+    h += `<tr><th class="entity" title="${esc(obj.name)}">${esc(obj.short || obj.name)}</th>`;
+    S.days.forEach((day,d) => {
+      const active = Array.from({length:S.periods},(_,p) => cards.filter(c => c.day===d && p>=c.period && p<c.period+c.len));
+      for(let p=0;p<S.periods;) {
+        const cs=active[p]; let span=1;
+        if(cs.length) while(p+span<S.periods && active[p+span].length===cs.length && active[p+span].every(c=>cs.includes(c))) span++;
+        const off=obj.off?.[d+'-'+p];
+        h += `<td colspan="${span}" class="${p===0?'day-start ':''}${cs.length>1?'multi ':''}${off&&!cs.length?'off':''}" data-d="${d}" data-p="${p}" data-entity="${esc(obj.id)}" data-type="${type}">`;
+        cs.forEach(c => {
+          const l=lessonOf(c.lessonId),s=subj(l.subjectId),color=type==='room'&&l.teacherIds[0]?teach(l.teacherIds[0]).color:s.color;
+          h += `<div class="cc" draggable="true" data-idx="${DB.cards.indexOf(c)}" style="background:${color};color:${contrast(color)}" title="${esc(s.name)} — ${esc(lClasses(l))} — ${esc(lTeachers(l))}"><b>${esc(s.short)}</b>${c.locked?'<span class="lk">🔒</span>':''}</div>`;
+        });
+        if(!cs.length) h += `<button type="button" class="slot-toggle" data-slot-toggle aria-label="${esc(obj.name)}, ${esc(day)}, waktu ${p+1}">${off?'×':''}</button>`;
+        h += '</td>'; p+=span;
+      }
+    });
+    h += '</tr>';
+  });
+  return h+'</tbody></table>';
+}
+function unplacedMove(lessonId,len) {
+  const units=DB.lessons.flatMap(l=>remainingParts(l,DB.cards).map(n=>({lessonId:l.id,len:n,diff:0})));
+  const u=bundleUnits(buildCtx(0),units).find(u=>u.len===len && (u.lessonId===lessonId || u.members?.some(m=>m.lessonId===lessonId)));
+  return u ? {card:null,lessonId,len,members:u.members || [u]} : null;
+}
+function suggestedSlots(move) {
+  if(!move || generating) return [];
+  const ctx=buildCtx(0),occ=emptyOcc();DB.cards.forEach(c=>occAdd(occ,ctx,c,1));
+  const members=move.members || [{lessonId:move.lessonId,len:move.len}], slots=[];
+  for(let d=0;d<ctx.D;d++) for(let p=0;p+move.len<=ctx.P;p++) {
+    const added=[];let ok=true;
+    for(const m of members) {
+      const l=ctx.lmap[m.lessonId];
+      if(!l || !remainingParts(l,DB.cards).includes(move.len)){ok=false;break;}
+      // Any already placed partner must stay aligned; never split a combination.
+      const aligned=DB.lessons.filter(o=>o.id!==l.id && l.group && o.group && l.classIds.some(id=>o.classIds.includes(id)&&!groupsClash(l.group,o.group,ctx.cMap[id])));
+      if(aligned.some(o=>!members.some(x=>x.lessonId===o.id)&&DB.cards.some(c=>c.lessonId===o.id&&c.len===move.len)&&!DB.cards.some(c=>c.lessonId===o.id&&c.len===move.len&&c.day===d&&c.period===p))){ok=false;break;}
+      const cf=conflicts(occ,ctx,m.lessonId,move.len,d,p);
+      if(!cf || cf.length){ok=false;break;}
+      const c={lessonId:m.lessonId,len:move.len,day:d,period:p,locked:true};occAdd(occ,ctx,c,1);added.push(c);
+    }
+    const teachers=new Set(added.flatMap(c=>ctx.lmap[c.lessonId].teacherIds));
+    if(ok) for(const tid of teachers) {
+      const cards=teacherDayCards(occ,ctx,tid,d);
+      if(teacherDayIssue(ctx,tid,cards) || (ctx.filters.minEnabled && (occ.tDay[tid+':'+d]||0)<ctx.filters.minDay)){ok=false;break;}
+    }
+    added.forEach(c=>occAdd(occ,ctx,c,-1));
+    if(ok) slots.push({day:d,period:p});
+  }
+  return slots;
+}
+function placeSuggested(move,d,p) {
+  if(!suggestedSlots(move).some(s=>s.day===d&&s.period===p)) return false;
+  (move.members || [{lessonId:move.lessonId}]).forEach(m=>DB.cards.push({lessonId:m.lessonId,len:move.len,day:d,period:p,locked:true}));
+  selectedUnplaced=null;save();render();return true;
+}
+function targetMatches(td,move) {
+  const l=lessonOf(move.lessonId);return !!l && (!td.dataset.entity || lessonMatch(l,td.dataset.type,td.dataset.entity));
+}
+function highlightSuggestions() {
+  document.querySelectorAll('td.suggested').forEach(td=>td.classList.remove('suggested'));
+  document.querySelectorAll('.chip[data-new]').forEach(el=>{
+    const on=!!selectedUnplaced&&el.dataset.new===selectedUnplaced.lessonId&&+el.dataset.len===selectedUnplaced.len;
+    el.classList.toggle('selected',on);el.setAttribute('aria-pressed',String(on));
+  });
+  const status=$('#suggestionStatus');if(!selectedUnplaced){if(status)status.textContent='';return;}
+  const slots=suggestedSlots(selectedUnplaced), starts=new Set(slots.map(s=>s.day+'-'+s.period));
+  document.querySelectorAll('table.tt td[data-d]').forEach(td=>{
+    if(td.querySelector('.cc') || td.classList.contains('off') || !targetMatches(td,selectedUnplaced))return;
+    const d=+td.dataset.d,p=+td.dataset.p;
+    if(slots.some(s=>s.day===d&&p>=s.period&&p<s.period+selectedUnplaced.len))td.classList.add('suggested');
+    td.dataset.suggestStart=String(starts.has(d+'-'+p));
+  });
+  if(status)status.textContent=slots.length ? slots.length+' cadangan penempatan' : 'Tiada slot sesuai yang mematuhi penapis dan gabungan.';
+}
 function toggleSlotBlock(type, id, d, p) {
   const kind = type === 'class' ? 'classes' : type === 'teacher' ? 'teachers' : '';
   const obj = kind ? byId(DB[kind], id) : null;
@@ -1218,23 +1321,32 @@ let drag = null;
 function bindGrid() {
   document.querySelectorAll('[data-slot-toggle]').forEach(el => el.addEventListener('click', () => {
     const td = el.closest('td');
-    if (td) toggleSlotBlock(viewState.type, viewState.id, +td.dataset.d, +td.dataset.p);
+    if (!td) return;
+    if(selectedUnplaced){if(targetMatches(td,selectedUnplaced)&&placeSuggested(selectedUnplaced,+td.dataset.d,+td.dataset.p))toast('Kad diletakkan bersama & dikunci 🔒');else toast('Slot ini tidak sesuai.');return;}
+    toggleSlotBlock(td.dataset.type || viewState.type, td.dataset.entity || viewState.id, +td.dataset.d, +td.dataset.p);
   }));
   document.querySelectorAll('.cc[data-idx], .chip[data-new]').forEach(el => {
     el.addEventListener('dragstart', e => {
       if (el.dataset.idx !== undefined) { const c = DB.cards[+el.dataset.idx]; drag = { card: c, lessonId: c.lessonId, len: c.len }; }
-      else drag = { card: null, lessonId: el.dataset.new, len: +el.dataset.len };
+      else drag = unplacedMove(el.dataset.new,+el.dataset.len);
+      if(!drag){e.preventDefault();return;}
       e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'x');
     });
     el.addEventListener('dragend', () => { drag = null; document.querySelectorAll('.drop-ok,.drop-bad').forEach(x => x.classList.remove('drop-ok', 'drop-bad')); });
   });
+  document.querySelectorAll('.chip[data-new]').forEach(el=>el.addEventListener('click',()=>{
+    selectedUnplaced=selectedUnplaced?.lessonId===el.dataset.new&&selectedUnplaced.len===+el.dataset.len ? null : unplacedMove(el.dataset.new,+el.dataset.len);highlightSuggestions();
+  }));
+  highlightSuggestions();
   document.querySelectorAll('.cc[data-idx]').forEach(el => el.addEventListener('click', () => cardMenu(DB.cards[+el.dataset.idx])));
   document.querySelectorAll('table.tt td[data-d]').forEach(td => {
-    td.addEventListener('dragover', e => { if (!drag) return; e.preventDefault(); const r = canDrop(drag.lessonId, drag.len, +td.dataset.d, +td.dataset.p, drag.card); td.classList.toggle('drop-ok', r.ok); td.classList.toggle('drop-bad', !r.ok); });
+    td.addEventListener('dragover', e => { if (!drag) return; e.preventDefault(); if(!targetMatches(td,drag)){td.classList.add('drop-bad');return;} const r = drag.members ? {ok:suggestedSlots(drag).some(s=>s.day===+td.dataset.d&&s.period===+td.dataset.p)} : canDrop(drag.lessonId, drag.len, +td.dataset.d, +td.dataset.p, drag.card); td.classList.toggle('drop-ok', r.ok); td.classList.toggle('drop-bad', !r.ok); });
     td.addEventListener('dragleave', () => td.classList.remove('drop-ok', 'drop-bad'));
     td.addEventListener('drop', e => {
       e.preventDefault(); if (!drag) return;
       const move = { ...drag }, d = +td.dataset.d, p = +td.dataset.p;
+      if(!targetMatches(td,move)){drag=null;toast('Kad bukan untuk baris ini.');return;}
+      if(move.members){drag=null;if(placeSuggested(move,d,p))toast('Kad diletakkan bersama & dikunci 🔒');else{toast('Slot tidak mematuhi penapis atau gabungan.');render();}return;}
       const r = canDrop(move.lessonId, move.len, d, p, move.card);
       drag = null;
       document.querySelectorAll('.drop-ok,.drop-bad').forEach(x => x.classList.remove('drop-ok', 'drop-bad'));

@@ -221,7 +221,59 @@ const ctx=buildCtx(0),units=DB.lessons.flatMap(l=>splitUnits(l).map(len=>({lesso
 const result=await attempt(ctx,[],units);
 assert.equal(result.missing,0);assert.equal(result.filterIssues.length,0);
 for(let d=0;d<2;d++)assert.equal(result.placed.filter(c=>c.day===d).reduce((n,c)=>n+c.len,0),2);
+const seed=repairSeed(ctx,result,[]);const r2=await attempt(ctx,[],seed.units,()=>false,Infinity,seed.keep);
+assert.equal(r2.missing,0,'repair attempt places every period');assert.equal(teacherFilterIssues(ctx,r2.placed).length,0,'repair attempt still obeys filters');
 })()`}
+);
+
+suites.push(
+{name:'suggestions avoid occupied and blocked spaces',fixture:true,run:`
+fixture();DB.cards.shift();DB.teachers[0].off['0-3']=true;
+const move=unplacedMove('pjA',1);
+assert.deepEqual(Array.from(suggestedSlots(move),s=>s.period),[0,1]);
+assert.equal(placeSuggested(move,0,2),false);assert.equal(DB.cards.length,2);
+assert.equal(placeSuggested(move,0,1),true);assert.equal(DB.cards.find(c=>c.lessonId==='pjA').period,1);
+`},
+{name:'suggestions obey maximum filter',run:filterFixture+`
+DB.cards=[{lessonId:'a',day:0,period:0,len:2}];
+Object.assign(DB.settings.teacherFilters,{maxEnabled:true,maxDay:2});
+const slots=suggestedSlots(unplacedMove('b',1));
+assert.equal(slots.some(s=>s.day===0),false);assert.equal(slots.some(s=>s.day===1),true);
+`},
+{name:'suggestions obey minimum filter',run:filterFixture+`
+Object.assign(DB.settings.teacherFilters,{minEnabled:true,minDay:2});
+assert.equal(suggestedSlots(unplacedMove('b',1)).length,0);
+DB.cards=[{lessonId:'a',day:0,period:0,len:1}];
+assert.equal(suggestedSlots(unplacedMove('b',1)).some(s=>s.day===0),true);
+assert.equal(suggestedSlots(unplacedMove('b',1)).some(s=>s.day===1),false);
+`},
+{name:'suggestions obey consecutive rest filter',run:filterFixture+`
+Object.assign(DB.settings.teacherFilters,{consecutiveEnabled:true,consecutiveMax:4,consecutiveRest:1});
+DB.cards=[{lessonId:'a',day:0,period:0,len:4}];
+const slots=suggestedSlots(unplacedMove('b',1));
+assert.equal(slots.some(s=>s.day===0&&s.period===4),false);
+assert.equal(slots.some(s=>s.day===0&&s.period===5),true);
+`},
+{name:'suggestions obey rest between classes',run:filterFixture+`
+Object.assign(DB.settings.teacherFilters,{restEnabled:true,classRest:1});
+DB.cards=[{lessonId:'a',day:0,period:0,len:2}];
+const slots=suggestedSlots(unplacedMove('b',1));
+assert.equal(slots.some(s=>s.day===0&&s.period===2),false);
+assert.equal(slots.some(s=>s.day===0&&s.period===3),true);
+`},
+{name:'suggestions place PAI PM together',run:`
+render=()=>{};save=()=>{};DB=blank();DB.settings.days=['Isnin'];DB.settings.periods=4;
+DB.classes=[{id:'c',name:'AR',short:'AR',off:{},groupSets:'PAI,PM'}];
+DB.subjects=[{id:'pai',short:'PAI',off:{}},{id:'pm',short:'PM',off:{}}];
+DB.teachers=[{id:'t1',off:{}},{id:'t2',off:{'0-0':true}}];
+DB.lessons=[{id:'pai',classIds:['c'],teacherIds:['t1'],subjectId:'pai',group:'PAI',len:2,perWeek:2},{id:'pm',classIds:['c'],teacherIds:['t2'],subjectId:'pm',group:'PM',len:2,perWeek:2}];
+const move=unplacedMove('pai',2);assert.equal(move.members.length,2);
+assert.deepEqual(Array.from(suggestedSlots(move),s=>s.period),[1,2]);
+assert.equal(placeSuggested(move,0,0),false);assert.equal(DB.cards.length,0);
+assert.equal(placeSuggested(move,0,1),true);assert.equal(DB.cards.length,2);
+assert.equal(DB.cards[0].period,1);assert.equal(DB.cards[1].period,1);
+assert.equal(DB.cards[0].len,2);assert.equal(DB.cards[1].len,2);
+`}
 );
 
 main().catch(error => { console.error(error); process.exitCode = 1; });
