@@ -245,7 +245,9 @@ const lTeachersShort = l => l.teacherIds.map(id => teach(id).short).join(', ') |
 const sumPeriods = arr => arr.reduce((a, l) => a + l.perWeek, 0);
 // Kumpulan: '' = seluruh kelas. Dua pelajaran kelas yang sama boleh serentak hanya jika kedua-duanya kumpulan berbeza (cth PAI & PM).
 const normGroup = g => { g = String(g || '').trim(); return /^(entire class|seluruh kelas|semua|whole class)?$/i.test(g) ? '' : g; };
-const groupsClash = (a, b) => !a || !b || a.toUpperCase() === b.toUpperCase();
+// Gabungan kumpulan ditetapkan per kelas (cth "PAI, PM"). Kumpulan berbeza hanya boleh serentak jika berada dalam set gabungan yang sama bagi kelas itu.
+const groupSetsOf = c => String((c && c.groupSets) || '').split(/[;\n]/).map(x => x.split(/[,\/+&]/).map(y => y.trim().toUpperCase()).filter(Boolean)).filter(x => x.length > 1);
+const groupsClash = (a, b, c) => { if (!a || !b) return true; a = a.toUpperCase(); b = b.toUpperCase(); if (a === b) return true; if (c === undefined) return false; return !groupSetsOf(c).some(x => x.includes(a) && x.includes(b)); };
 // Kelas gabung: pelajaran subjek sama yang melibatkan beberapa kelas (dengan/tanpa guru) boleh berjalan serentak
 // dengan pelajaran subjek sama bagi kelas itu, jadi tidak dikira dua kali (bukan terlebih waktu).
 const isCombined = l => !!l && l.classIds.length > 1;
@@ -255,7 +257,10 @@ function classUnits(c) {
   ls.forEach(l => { if (l.group) { g[l.group.toUpperCase()] = (g[l.group.toUpperCase()] || 0) + l.perWeek; return; }
     const s = bySubj[l.subjectId] = bySubj[l.subjectId] || { comb: 0, own: 0 }; if (isCombined(l)) s.comb = Math.max(s.comb, l.perWeek); else s.own += l.perWeek; });
   Object.values(bySubj).forEach(s => whole += Math.max(s.comb, s.own));
-  return whole + Math.max(0, ...Object.values(g)); }
+  const done = new Set();
+  groupSetsOf(c).forEach(x => { const vals = x.filter(k => g[k] && !done.has(k)); vals.forEach(k => done.add(k)); whole += Math.max(0, ...vals.map(k => g[k])); });
+  Object.keys(g).forEach(k => { if (!done.has(k)) whole += g[k]; });
+  return whole; }
 
 /* =========================================================
    UI HELPERS
@@ -368,9 +373,9 @@ const VIEWS = {
   classes() {
     const cap = DB.settings.days.length * DB.settings.periods;
     return head('Kelas', 'Senarai kelas di sekolah anda.', `<button class="btn pri" onclick="editClass()">+ Kelas baharu</button>`) +
-    `<div class="card">${DB.classes.length ? `<table class="list"><tr><th>Nama kelas</th><th>Singkatan</th><th>Waktu/minggu</th><th>Tidak boleh</th><th></th></tr>
+    `<div class="card">${DB.classes.length ? `<table class="list"><tr><th>Nama kelas</th><th>Singkatan</th><th>Waktu/minggu</th><th>Gabungan</th><th>Tidak boleh</th><th></th></tr>
       ${DB.classes.map(c => { const u = classUnits(c); const avail = cap - Object.keys(c.off).length;
-        return `<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.short)}</td><td><span class="pill ${u <= avail ? 'ok' : 'bad'}">${u}/${avail}</span></td><td>${Object.keys(c.off).length} slot</td>
+        return `<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.short)}</td><td><span class="pill ${u <= avail ? 'ok' : 'bad'}">${u}/${avail}</span></td><td>${esc(c.groupSets || '—')}</td><td>${Object.keys(c.off).length} slot</td>
       <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="editOff('classes','${c.id}')">Masa</button> <button class="btn sm" onclick="editClass('${c.id}')">Ubah</button> <button class="btn sm danger" onclick="removeItem('classes','${c.id}')">Padam</button></td></tr>`; }).join('')}</table>` : '<div class="empty">Belum ada kelas.</div>'}</div>` + nextBtn('rooms', 'Seterusnya: Bilik');
   },
 
@@ -507,10 +512,11 @@ function editSubject(id) {
 }
 function editClass(id) {
   const c = byId(DB.classes, id) || { name: '', short: '' };
-  modalForm(id ? 'Ubah kelas' : 'Kelas baharu', `<label>Nama kelas</label><input id="f_name" required value="${esc(c.name)}" placeholder="cth: 1 Amanah">${id ? `<div style="margin-top:10px"><label>Singkatan</label><input id="f_short" value="${esc(c.short)}"></div>` : '<p class="muted" style="font-size:12px">Tip: pisahkan dengan koma untuk tambah banyak kelas sekaligus (cth: 1A, 1B, 1C).</p>'}`, () => {
-    const v = $('#f_name').value.trim(); if (!v) return false;
-    if (id) { c.name = v; c.short = $('#f_short').value.trim() || v; }
-    else v.split(',').map(x => x.trim()).filter(Boolean).forEach(n => DB.classes.push({ id: uid(), name: n, short: n, off: {} }));
+  modalForm(id ? 'Ubah kelas' : 'Kelas baharu', `<label>Nama kelas</label><input id="f_name" required value="${esc(c.name)}" placeholder="cth: 1 Amanah">${id ? `<div style="margin-top:10px"><label>Singkatan</label><input id="f_short" value="${esc(c.short)}"></div>` : '<p class="muted" style="font-size:12px">Tip: pisahkan dengan koma untuk tambah banyak kelas sekaligus (cth: 1A, 1B, 1C).</p>'}
+    <div style="margin-top:10px"><label>Gabungan kumpulan dibenarkan</label><input id="f_gs" value="${esc(c.groupSets || '')}" placeholder="cth: PAI, PM"><small class="muted">Hanya kumpulan dalam set yang sama boleh serentak. Pisahkan set dengan ; (cth: PAI, PM; BC, BT). Kosong = tiada gabungan.</small></div>`, () => {
+    const v = $('#f_name').value.trim(); if (!v) return false; const gs = $('#f_gs').value.trim();
+    if (id) { c.name = v; c.short = $('#f_short').value.trim() || v; c.groupSets = gs; }
+    else v.split(',').map(x => x.trim()).filter(Boolean).forEach(n => DB.classes.push({ id: uid(), name: n, short: n, off: {}, groupSets: gs }));
   });
 }
 function editRoom(id) {
@@ -657,7 +663,7 @@ function conflicts(occ, ctx, lessonId, len, d, p) {
   const found = new Set();
   for (let k = 0; k < len; k++) {
     const s = key3(d, p + k);
-    l.classIds.forEach(id => (occ.cls[id]?.[s] || []).forEach(x => { const o = ctx.lmap[x.lessonId]; if (combinedShare(l, o)) return; if (groupsClash(l.group, o?.group)) found.add(x); }));
+    l.classIds.forEach(id => (occ.cls[id]?.[s] || []).forEach(x => { const o = ctx.lmap[x.lessonId]; if (combinedShare(l, o)) return; if (groupsClash(l.group, o?.group, ctx.cMap[id] || null)) found.add(x); }));
     l.teacherIds.forEach(id => (occ.tch[id]?.[s] || []).forEach(x => found.add(x)));
     if (l.roomId) (occ.room[l.roomId]?.[s] || []).forEach(x => found.add(x));
   }

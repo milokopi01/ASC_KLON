@@ -97,6 +97,9 @@ DB.lessons = [
  {id:'b',classIds:['c'],teacherIds:['t2'],subjectId:'pm',group:'PM',len:2,perWeek:2},
  {id:'w',classIds:['c'],teacherIds:['t3'],subjectId:'bm',group:'',len:1,perWeek:1}];
 DB.cards=[{lessonId:'a',day:0,period:0,len:2}];
+assert.equal(canDrop('b',2,0,0).ok,false,'groups without a class grouping set cannot share');
+assert.equal(classUnits(DB.classes[0]),5,'ungrouped groups count separately');
+DB.classes[0].groupSets='PAI, PM';
 assert.equal(canDrop('b',2,0,0).ok,true,'PAI and PM groups may share the slot');
 assert.equal(canDrop('w',1,0,0).ok,false,'entire-class lesson cannot overlap a group lesson');
 assert.equal(canDrop('a',2,0,0,null).ok,false,'same group cannot double up');
